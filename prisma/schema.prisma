@@ -1,0 +1,132 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model PlanningApplication {
+  id          String   @id @default(cuid())
+  reference   String   @unique
+  council     String
+  address     String
+  description String
+  units       Int
+  status      String
+  applicant   String?
+  architect   String?
+  submittedAt DateTime
+  decidedAt   DateTime?
+  alertSent   Boolean  @default(false)
+  decisionAlertSent Boolean @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  documents   Document[]
+  statusHistory ApplicationStatusChange[]
+  socialPosts SocialPost[]
+}
+
+model ApplicationStatusChange {
+  id            String   @id @default(cuid())
+  applicationId String
+  fromStatus    String
+  toStatus      String
+  changedAt     DateTime @default(now())
+  alertSent     Boolean  @default(false)
+  application   PlanningApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+}
+
+model Document {
+  id            String   @id @default(cuid())
+  applicationId String
+  type          String
+  name          String
+  url           String?
+  fileSize      String?
+  status        String
+  retrievedAt   DateTime?
+  createdAt     DateTime @default(now())
+  application   PlanningApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+}
+
+model SocialPost {
+  id              String   @id @default(cuid())
+  platform        String
+  content         String
+  imageUrl        String?
+  imageGeneratedAt DateTime?
+  status          String
+  approvalStatus  String   @default("pending_review")
+  reviewNote      String?
+  scheduledAt     DateTime?
+  publishedAt     DateTime?
+  engagements     Int      @default(0)
+  reach           Int      @default(0)
+  createdAt       DateTime @default(now())
+  applicationId   String?
+  application     PlanningApplication? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+}
+
+model AdCampaign {
+  id          String   @id @default(cuid())
+  name        String
+  platform    String
+  status      String
+  budget      Float
+  spent       Float    @default(0)
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  leads       Int      @default(0)
+  targeting   String
+  startDate   DateTime?
+  endDate     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model MailingContact {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  company   String?
+  type      String
+  tags      String   @default("")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model MailingCampaign {
+  id             String   @id @default(cuid())
+  subject        String
+  content        String
+  status         String
+  recipientCount Int      @default(0)
+  openCount      Int      @default(0)
+  clickCount     Int      @default(0)
+  sentAt         DateTime?
+  createdAt      DateTime @default(now())
+  recipients     MailingRecipient[]
+}
+
+model MailingRecipient {
+  id              String   @id @default(cuid())
+  campaignId      String
+  email           String
+  name            String
+  status          String   @default("pending")
+  mixmaxMessageId String?
+  sentAt          DateTime?
+  campaign        MailingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+model AutomationRun {
+  id          String   @id @default(cuid())
+  type        String
+  status      String
+  summary     String?
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+  error       String?
+}
