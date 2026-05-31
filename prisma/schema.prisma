@@ -129,3 +129,45 @@ model AutomationRun {
   completedAt DateTime?
   error       String?
 }
+
+// IdealLand's own paying customers — clients we auto-bill via the invoicing
+// module. NOT to be confused with MailingContact (developers/architects we
+// market TO on behalf of IdealLand).
+model Client {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  billingEmail  String?
+  billingModel  String   // "flat_monthly" | "per_application"
+  monthlyRate   Float?   // populated when billingModel = flat_monthly
+  perUnitRate   Float?   // populated when billingModel = per_application
+  currency      String   @default("GBP")
+  status        String   @default("active") // "active" | "paused" | "cancelled"
+  xeroContactId String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  invoices      Invoice[]
+}
+
+model Invoice {
+  id             String   @id @default(cuid())
+  clientId       String
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  periodStart    DateTime
+  periodEnd      DateTime
+  amount         Float
+  currency       String   @default("GBP")
+  status         String   @default("draft") // "draft" | "sent" | "paid" | "overdue" | "void"
+  lineItems      String   // JSON: [{description, qty, unitAmount}]
+  xeroInvoiceId  String?
+  xeroInvoiceNum String?
+  sentAt         DateTime?
+  paidAt         DateTime?
+  dueDate        DateTime?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([clientId, periodStart])
+}

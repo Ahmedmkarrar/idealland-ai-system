@@ -8,5 +8,6 @@ export async function GET() {
     hmlr: !!(process.env.HMLR_API_KEY && !process.env.HMLR_API_KEY.includes("PLACEHOLDER")),
     cronSecret: !!(process.env.CRON_SECRET && !process.env.CRON_SECRET.includes("replace_with")),
     mixmax: !!(process.env.MIXMAX_API_KEY && !process.env.MIXMAX_API_KEY.includes("PLACEHOLDER")),
+    xero: !!(process.env.XERO_CLIENT_ID && !process.env.XERO_CLIENT_ID.includes("PLACEHOLDER")),
   });
 }

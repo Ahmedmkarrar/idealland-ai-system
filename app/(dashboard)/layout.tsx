@@ -8,6 +8,7 @@ import {
   Megaphone,
   Mail,
   LayoutDashboard,
+  Receipt,
   Zap,
   AlertTriangle,
 } from "lucide-react";
@@ -19,6 +20,7 @@ const NAV_ITEMS = [
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/social", label: "Social Content", icon: Megaphone },
   { href: "/mailing", label: "Mailing", icon: Mail },
+  { href: "/invoicing", label: "Invoicing", icon: Receipt },
   { href: "/errors", label: "Error Log", icon: AlertTriangle },
 ];
 

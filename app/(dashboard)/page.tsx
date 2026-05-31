@@ -25,6 +25,7 @@ interface ConfigStatus {
   hmlr: boolean;
   cronSecret: boolean;
   mixmax: boolean;
+  xero: boolean;
 }
 
 interface Stats {
@@ -63,6 +64,7 @@ const CONFIG_LABELS: Array<{ key: keyof ConfigStatus; label: string; description
   { key: "hmlr", label: "HMLR", description: "Land Registry documents" },
   { key: "cronSecret", label: "Cron Secret", description: "Automated daily scheduling" },
   { key: "mixmax", label: "Mixmax (opt)", description: "Optional — Resend covers mailing" },
+  { key: "xero", label: "Xero (opt)", description: "Optional — invoices mark sent locally without" },
 ];
 
 export default function OverviewPage() {
@@ -181,7 +183,7 @@ export default function OverviewPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-6 gap-3">
+            <div className="grid grid-cols-7 gap-3">
               {CONFIG_LABELS.map(({ key, label, description }) => {
                 const isActive = configStatus[key];
                 return (
