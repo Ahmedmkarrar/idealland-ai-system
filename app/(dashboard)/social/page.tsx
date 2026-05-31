@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { RefreshCw, Wand2, Send, Video, CheckCircle, XCircle, Clock } from "lucide-react";
+import { RefreshCw, Wand2, Video, CheckCircle, XCircle, Clock } from "lucide-react";
 
 interface SocialPost {
   id: string;
@@ -47,7 +47,6 @@ export default function SocialPage() {
   const [pendingReviewPosts, setPendingReviewPosts] = useState<SocialPost[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isPublishing, setIsPublishing] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [platformFilter, setPlatformFilter] = useState("all");
@@ -80,17 +79,6 @@ export default function SocialPage() {
     await fetch("/api/social", { method: "POST" });
     await fetchPosts();
     setIsGenerating(false);
-  };
-
-  const handlePublishDue = async () => {
-    setIsPublishing(true);
-    await fetch("/api/social", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "publish" }),
-    });
-    await fetchPosts();
-    setIsPublishing(false);
   };
 
   const handleApprove = async (postId: string) => {
@@ -132,17 +120,10 @@ export default function SocialPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Social Content</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            AI-generated posts across Instagram, LinkedIn, TikTok, and Facebook
+            AI-drafted posts across Instagram, LinkedIn, TikTok, Facebook — review, approve, copy to your socials manually
           </p>
         </div>
         <div className="flex gap-2">
-          <Button onClick={handlePublishDue} disabled={isPublishing} variant="outline">
-            {isPublishing ? (
-              <><RefreshCw className="w-4 h-4 mr-2 animate-spin" />Publishing...</>
-            ) : (
-              <><Send className="w-4 h-4 mr-2" />Publish Due</>
-            )}
-          </Button>
           <Button onClick={handleGenerate} disabled={isGenerating}>
             {isGenerating ? (
               <><RefreshCw className="w-4 h-4 mr-2 animate-spin" />Generating...</>

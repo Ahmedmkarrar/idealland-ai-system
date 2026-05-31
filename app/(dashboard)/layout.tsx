@@ -6,7 +6,6 @@ import {
   Building2,
   FileText,
   Megaphone,
-  BarChart3,
   Mail,
   LayoutDashboard,
   Zap,
@@ -19,7 +18,6 @@ const NAV_ITEMS = [
   { href: "/sourcing", label: "Sourcing", icon: Building2 },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/social", label: "Social Content", icon: Megaphone },
-  { href: "/advertising", label: "Advertising", icon: BarChart3 },
   { href: "/mailing", label: "Mailing", icon: Mail },
   { href: "/errors", label: "Error Log", icon: AlertTriangle },
 ];

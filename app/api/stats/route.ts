@@ -11,9 +11,6 @@ export async function GET() {
     totalPosts,
     publishedPosts,
     scheduledPosts,
-    activeCampaigns,
-    totalAdSpend,
-    totalLeads,
     totalContacts,
     sentMailCampaigns,
     recentRuns,
@@ -26,9 +23,6 @@ export async function GET() {
     prisma.socialPost.count(),
     prisma.socialPost.count({ where: { status: "published" } }),
     prisma.socialPost.count({ where: { status: "scheduled" } }),
-    prisma.adCampaign.count({ where: { status: "active" } }),
-    prisma.adCampaign.aggregate({ _sum: { spent: true } }),
-    prisma.adCampaign.aggregate({ _sum: { leads: true } }),
     prisma.mailingContact.count({ where: { active: true } }),
     prisma.mailingCampaign.count({ where: { status: "sent" } }),
     prisma.automationRun.findMany({
@@ -41,11 +35,6 @@ export async function GET() {
     sourcing: { totalApplications, approvedApplications, pendingApplications },
     documents: { totalDocuments, retrievedDocuments, pendingDocuments: totalDocuments - retrievedDocuments },
     social: { totalPosts, publishedPosts, scheduledPosts },
-    ads: {
-      activeCampaigns,
-      totalSpend: totalAdSpend._sum.spent ?? 0,
-      totalLeads: totalLeads._sum.leads ?? 0,
-    },
     mailing: { totalContacts, sentMailCampaigns },
     recentRuns,
   });

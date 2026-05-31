@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateAndSchedulePosts, publishScheduledPosts, getSocialPosts } from "@/lib/services/social";
+import { generateAndSchedulePosts, getSocialPosts } from "@/lib/services/social";
 import { applyRateLimit } from "@/lib/rate-limit";
 
 export async function GET(request: NextRequest) {
@@ -18,12 +18,6 @@ export async function POST(request: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse;
 
   const body = await request.json().catch(() => ({}));
-
-  if (body.action === "publish") {
-    const result = await publishScheduledPosts();
-    return NextResponse.json(result);
-  }
-
   const result = await generateAndSchedulePosts(body.applicationId);
   return NextResponse.json(result);
 }

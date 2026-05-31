@@ -9,7 +9,6 @@ import {
   Building2,
   FileText,
   Megaphone,
-  BarChart3,
   Mail,
   RefreshCw,
   TrendingUp,
@@ -23,8 +22,6 @@ interface ConfigStatus {
   resend: boolean;
   anthropic: boolean;
   openai: boolean;
-  ayrshare: boolean;
-  meta: boolean;
   hmlr: boolean;
   cronSecret: boolean;
   mixmax: boolean;
@@ -34,7 +31,6 @@ interface Stats {
   sourcing: { totalApplications: number; approvedApplications: number; pendingApplications: number };
   documents: { totalDocuments: number; retrievedDocuments: number; pendingDocuments: number };
   social: { totalPosts: number; publishedPosts: number; scheduledPosts: number };
-  ads: { activeCampaigns: number; totalSpend: number; totalLeads: number };
   mailing: { totalContacts: number; sentMailCampaigns: number };
   recentRuns: Array<{
     id: string;
@@ -51,7 +47,6 @@ const RUN_TYPE_LABELS: Record<string, string> = {
   decisions: "Decision Check",
   documents: "Document Retrieval",
   social: "Social Content",
-  ads: "Ad Campaigns",
   mailing: "Mailing",
 };
 
@@ -62,14 +57,12 @@ const STATUS_ICON = {
 };
 
 const CONFIG_LABELS: Array<{ key: keyof ConfigStatus; label: string; description: string }> = [
-  { key: "anthropic", label: "Claude AI", description: "Social content generation" },
+  { key: "anthropic", label: "Claude AI", description: "Social content drafting" },
   { key: "openai", label: "OpenAI", description: "DALL-E image generation" },
-  { key: "ayrshare", label: "Ayrshare", description: "Social media publishing" },
-  { key: "resend", label: "Resend", description: "Email alerts & mailing" },
-  { key: "meta", label: "Meta Ads", description: "Instagram & Facebook campaigns" },
+  { key: "resend", label: "Resend", description: "Planning alerts + outreach mail" },
   { key: "hmlr", label: "HMLR", description: "Land Registry documents" },
   { key: "cronSecret", label: "Cron Secret", description: "Automated daily scheduling" },
-  { key: "mixmax", label: "Mixmax", description: "Campaign sending (primary)" },
+  { key: "mixmax", label: "Mixmax (opt)", description: "Optional — Resend covers mailing" },
 ];
 
 export default function OverviewPage() {
@@ -146,14 +139,6 @@ export default function OverviewPage() {
       bg: "bg-orange-50",
     },
     {
-      title: "Ad Spend",
-      icon: BarChart3,
-      value: `£${stats.ads.totalSpend.toFixed(0)}`,
-      sub: `${stats.ads.totalLeads} leads generated`,
-      color: "text-green-600",
-      bg: "bg-green-50",
-    },
-    {
       title: "Mailing List",
       icon: Mail,
       value: stats.mailing.totalContacts,
@@ -169,7 +154,7 @@ export default function OverviewPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Automation Overview</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            All 5 automations running for IdealLand
+            4 automations running for IdealLand (Sourcing · Documents · Social · Mailing)
           </p>
         </div>
         <div className="flex gap-2">
@@ -196,7 +181,7 @@ export default function OverviewPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-8 gap-3">
+            <div className="grid grid-cols-6 gap-3">
               {CONFIG_LABELS.map(({ key, label, description }) => {
                 const isActive = configStatus[key];
                 return (
@@ -231,7 +216,7 @@ export default function OverviewPage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         {statCards.map(({ title, icon: Icon, value, sub, color, bg }) => (
           <Card key={title}>
             <CardContent className="pt-6">
@@ -300,8 +285,8 @@ export default function OverviewPage() {
               { label: "Scan councils for new applications", endpoint: "/api/sourcing", icon: Building2 },
               { label: "Retrieve pending documents", endpoint: "/api/documents", icon: FileText },
               { label: "Generate social content", endpoint: "/api/social", icon: Megaphone },
-              { label: "Refresh ad metrics", endpoint: "/api/ads", body: { action: "refresh" }, icon: BarChart3 },
-            ].map(({ label, endpoint, body, icon: Icon }) => (
+              { label: "Send outreach mail", endpoint: "/api/mailing", icon: Mail },
+            ].map(({ label, endpoint, icon: Icon }) => (
               <Button
                 key={label}
                 variant="outline"
@@ -311,7 +296,7 @@ export default function OverviewPage() {
                   await fetch(endpoint, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(body ?? {}),
+                    body: "{}",
                   });
                   await fetchStats();
                 }}

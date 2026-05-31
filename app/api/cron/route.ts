@@ -3,8 +3,6 @@ import { applyRateLimit } from "@/lib/rate-limit";
 import { scanCouncils } from "@/lib/services/sourcing";
 import { checkDecisions } from "@/lib/services/decisions";
 import { retrieveAllPendingDocuments } from "@/lib/services/documents";
-import { publishScheduledPosts, syncEngagementMetrics } from "@/lib/services/social";
-import { refreshCampaignMetrics } from "@/lib/services/ads";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -23,9 +21,6 @@ export async function GET(request: NextRequest) {
     scanCouncils(),
     checkDecisions(),
     retrieveAllPendingDocuments(),
-    publishScheduledPosts(),
-    syncEngagementMetrics(),
-    refreshCampaignMetrics(),
   ]);
 
   const pick = (r: PromiseSettledResult<unknown>) =>
@@ -36,8 +31,5 @@ export async function GET(request: NextRequest) {
     sourcing: pick(results[0]),
     decisions: pick(results[1]),
     documents: pick(results[2]),
-    social: pick(results[3]),
-    engagement: pick(results[4]),
-    ads: pick(results[5]),
   });
 }

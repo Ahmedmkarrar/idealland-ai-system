@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
-import { publishScheduledPosts } from "@/lib/services/social";
 
+// Draft-only mode (no third-party publisher): "approve" marks the draft as
+// published/ready-to-copy. Staff manually copy the post text from the dashboard
+// and post to their socials. See lib/services/social.ts header for context.
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const { postId, action, note } = body as { postId: string; action: "approve" | "reject"; note?: string };
@@ -15,14 +17,12 @@ export async function POST(request: NextRequest) {
       where: { id: postId },
       data: {
         approvalStatus: "approved",
-        status: "scheduled",
-        scheduledAt: new Date(Date.now() + 60 * 60 * 1000),
+        status: "published",
+        publishedAt: new Date(),
         reviewNote: note ?? null,
       },
     });
-
-    const published = await publishScheduledPosts();
-    return NextResponse.json({ approved: true, ...published });
+    return NextResponse.json({ approved: true });
   }
 
   if (action === "reject") {

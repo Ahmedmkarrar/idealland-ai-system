@@ -1,17 +1,27 @@
+// Social content factory — DRAFT-ONLY mode.
+//
+// We do NOT publish to any third-party social vendor (Ayrshare, PostingCat, etc.).
+// Decision: 2026-05-31, "keep it simple, just going" — IdealLand staff copy
+// approved drafts from /social dashboard and post manually.
+//
+// What this file does:
+//   - generateAndSchedulePosts(): Claude drafts per-platform copy, DALL-E generates
+//     an optional image, posts are stored with status="draft", approvalStatus="pending_review".
+//   - getSocialPosts(): list/filter for the dashboard.
+//
+// What it does NOT do (intentionally):
+//   - No publishScheduledPosts(): the dashboard surfaces approved drafts; humans copy/paste.
+//   - No syncEngagementMetrics(): nothing to sync without a publisher integration.
 import { prisma } from "@/lib/db/client";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { withRetry } from "@/lib/retry";
+import { gatherPdfContextForApp } from "@/lib/services/pdf";
 
 const PLATFORMS = ["instagram", "linkedin", "tiktok", "facebook"] as const;
 
 function isClaudeConfigured(): boolean {
   const key = process.env.ANTHROPIC_API_KEY;
-  return !!(key && !key.includes("PLACEHOLDER"));
-}
-
-function isAyrshareConfigured(): boolean {
-  const key = process.env.AYRSHARE_API_KEY;
   return !!(key && !key.includes("PLACEHOLDER"));
 }
 
@@ -24,7 +34,8 @@ async function generateContentWithClaude(
   platform: string,
   units: number,
   location: string,
-  description: string
+  description: string,
+  pdfContext?: string
 ): Promise<string | null> {
   if (!isClaudeConfigured()) return null;
 
@@ -43,6 +54,15 @@ Brand voice: proactive, expert, opportunity-focused. We speak the language of de
 Our edge: we monitor every London borough daily so clients never miss a deal.
 Target audience: London-based property developers, architects, and investors.`;
 
+  const documentSection = pdfContext
+    ? `
+
+PLANNING DOCUMENTS (use these for specifics — only mention details actually present below, never invent):
+${pdfContext}
+
+`
+    : "";
+
   try {
     const message = await withRetry(() =>
       client.messages.create({
@@ -58,8 +78,8 @@ ${brandContext}
 Platform: ${platform} (style: ${platformGuidance[platform] ?? "engaging, professional"})
 New planning application just identified: ${units}-unit residential development in ${location}
 Description: ${description}
-
-Write a post that positions IdealLand as the intelligent early-mover advantage for developers. Make it feel like insider intelligence, not a press release.
+${documentSection}
+Write a post that positions IdealLand as the intelligent early-mover advantage for developers. Make it feel like insider intelligence, not a press release. ${pdfContext ? "Pull one concrete detail from the planning documents above to make the post specific and credible." : ""}
 Write ONLY the post text. No quotes, no labels, no explanation.`,
           },
         ],
@@ -92,56 +112,6 @@ async function generateImageWithDalle(units: number, location: string): Promise<
     return response.data?.[0]?.url ?? null;
   } catch {
     return null;
-  }
-}
-
-async function isImageUrlAccessible(url: string): Promise<boolean> {
-  try {
-    const response = await fetch(url, {
-      method: "HEAD",
-      signal: AbortSignal.timeout(5000),
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function publishToAyrshare(
-  platform: string,
-  content: string,
-  imageUrl?: string | null
-): Promise<{ success: boolean; postId?: string }> {
-  if (!isAyrshareConfigured()) return { success: false };
-
-  const platformMap: Record<string, string> = {
-    instagram: "instagram",
-    linkedin: "linkedin",
-    tiktok: "tiktok",
-    facebook: "facebook",
-  };
-
-  try {
-    const response = await withRetry(() =>
-      fetch("https://app.ayrshare.com/api/post", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.AYRSHARE_API_KEY}`,
-        },
-        body: JSON.stringify({
-          post: content,
-          platforms: [platformMap[platform]],
-          ...(imageUrl && { mediaUrls: [imageUrl] }),
-        }),
-      })
-    );
-
-    if (!response.ok) return { success: false };
-    const data = (await response.json()) as { id?: string };
-    return { success: true, postId: data.id };
-  } catch {
-    return { success: false };
   }
 }
 
@@ -178,6 +148,11 @@ export async function generateAndSchedulePosts(
       });
       if (existingPostCount >= PLATFORMS.length) continue;
 
+      // Pull text from the application's planning PDFs once per app, reuse
+      // across all four platforms. Falls back to "" if nothing extractable —
+      // generateContentWithClaude handles missing context cleanly.
+      const pdfContext = await gatherPdfContextForApp(app.id);
+
       const imageUrl = await generateImageWithDalle(app.units, app.council);
       const imageGeneratedAt = imageUrl ? new Date() : null;
 
@@ -187,13 +162,12 @@ export async function generateAndSchedulePosts(
         });
         if (alreadyHas) { skipped++; continue; }
 
-        const content = await generateContentWithClaude(platform, app.units, app.council, app.description);
+        const content = await generateContentWithClaude(platform, app.units, app.council, app.description, pdfContext || undefined);
         if (!content) {
           skipped++;
           continue;
         }
 
-        const scheduledAt = new Date(Date.now() + Math.random() * 48 * 60 * 60 * 1000);
         await prisma.socialPost.create({
           data: {
             platform,
@@ -202,7 +176,6 @@ export async function generateAndSchedulePosts(
             imageGeneratedAt,
             status: "draft",
             approvalStatus: "pending_review",
-            scheduledAt,
             applicationId: app.id,
           },
         });
@@ -216,7 +189,7 @@ export async function generateAndSchedulePosts(
       data: {
         status: "completed",
         completedAt: new Date(),
-        summary: `Generated ${generated} posts via Claude AI.${imageNote} ${skipped > 0 ? `${skipped} skipped.` : ""}`,
+        summary: `Generated ${generated} posts via Claude AI (PDF-aware).${imageNote} ${skipped > 0 ? `${skipped} skipped.` : ""}`,
       },
     });
 
@@ -229,108 +202,6 @@ export async function generateAndSchedulePosts(
     });
     throw error;
   }
-}
-
-const DALL_E_URL_EXPIRY_MS = 55 * 60 * 1000;
-
-export async function publishScheduledPosts(): Promise<{
-  published: number;
-  failed: number;
-  reason?: string;
-}> {
-  if (!isAyrshareConfigured()) {
-    return { published: 0, failed: 0, reason: "AYRSHARE_API_KEY not configured" };
-  }
-
-  const duePosts = await prisma.socialPost.findMany({
-    where: { status: "scheduled", scheduledAt: { lte: new Date() } },
-    include: { application: true },
-  });
-
-  let published = 0;
-  let failed = 0;
-
-  for (const post of duePosts) {
-    let imageUrl: string | null = post.imageUrl;
-
-    if (imageUrl && post.imageGeneratedAt) {
-      const imageAgeMs = Date.now() - new Date(post.imageGeneratedAt).getTime();
-      const isExpired = imageAgeMs > DALL_E_URL_EXPIRY_MS;
-
-      if (isExpired) {
-        const canRegenerate = isOpenAiConfigured() && post.application;
-        const freshUrl = canRegenerate
-          ? await generateImageWithDalle(post.application!.units, post.application!.council)
-          : null;
-
-        imageUrl = freshUrl;
-
-        if (freshUrl) {
-          await prisma.socialPost.update({
-            where: { id: post.id },
-            data: { imageUrl: freshUrl, imageGeneratedAt: new Date() },
-          });
-        } else {
-          await prisma.socialPost.update({ where: { id: post.id }, data: { imageUrl: null } });
-        }
-      } else {
-        const isAccessible = await isImageUrlAccessible(imageUrl);
-        if (!isAccessible) imageUrl = null;
-      }
-    }
-
-    const result = await publishToAyrshare(post.platform, post.content, imageUrl);
-    await prisma.socialPost.update({
-      where: { id: post.id },
-      data: {
-        status: result.success ? "published" : "failed",
-        publishedAt: result.success ? new Date() : null,
-      },
-    });
-    result.success ? published++ : failed++;
-  }
-
-  return { published, failed };
-}
-
-export async function syncEngagementMetrics(): Promise<{ updated: number }> {
-  if (!isAyrshareConfigured()) return { updated: 0 };
-
-  const publishedPosts = await prisma.socialPost.findMany({
-    where: { status: "published", publishedAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
-    take: 50,
-  });
-
-  let updated = 0;
-
-  for (const post of publishedPosts) {
-    try {
-      const response = await withRetry(() =>
-        fetch(`https://app.ayrshare.com/api/analytics/post?id=${post.id}&platforms=${post.platform}`, {
-          headers: { Authorization: `Bearer ${process.env.AYRSHARE_API_KEY}` },
-        })
-      );
-      if (!response.ok) continue;
-
-      type AyrshareAnalytics = {
-        analytics?: Array<{ likes?: number; comments?: number; shares?: number; impressions?: number }>;
-      };
-      const data = (await response.json()) as AyrshareAnalytics;
-      const row = data.analytics?.[0];
-      if (!row) continue;
-
-      const engagements = (row.likes ?? 0) + (row.comments ?? 0) + (row.shares ?? 0);
-      await prisma.socialPost.update({
-        where: { id: post.id },
-        data: { engagements, reach: row.impressions ?? 0 },
-      });
-      updated++;
-    } catch {
-      // Non-fatal: continue to next post
-    }
-  }
-
-  return { updated };
 }
 
 export async function getSocialPosts(filters?: { platform?: string; status?: string }) {
