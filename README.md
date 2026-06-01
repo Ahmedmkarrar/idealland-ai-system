@@ -1,218 +1,101 @@
-# Autom — IdealLand Automation Dashboard
+# IdealLand Automation Dashboard
 
-Internal dashboard for tracking planning applications, managing social posts, running ad campaigns, and sending mailing campaigns.
+Internal dashboard that runs IdealLand's planning-sourcing pipeline end-to-end: scrapes 27 London borough planning portals daily, drafts AI social content + outreach copy, sends segmented email campaigns, and auto-invoices clients monthly.
 
----
+## What runs in here
 
-## Prerequisites
-
-- [Node.js 20+](https://nodejs.org/)
-- [Git](https://git-scm.com/)
-- A [Railway](https://railway.app/) account
-
----
-
-## Local Development Setup
-
-### 1. Clone the repo
-
-```bash
-git clone <your-repo-url>
-cd autom
-```
-
-### 2. Install dependencies
-
-```bash
-npm install
-```
-
-### 3. Create environment file
-
-Create `.env.local` in the project root:
-
-```env
-# Auth
-DASHBOARD_PASSWORD=choose_a_strong_password
-
-# AI
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-
-# Email (Resend)
-RESEND_API_KEY=re_...
-ALERT_EMAIL_FROM=alerts@yourdomain.com
-ALERT_EMAIL_TO=you@yourdomain.com
-
-# Social (Ayrshare)
-AYRSHARE_API_KEY=...
-
-# Meta Ads
-META_ACCESS_TOKEN=...
-META_AD_ACCOUNT_ID=act_...
-META_PAGE_ID=...
-META_WEBSITE_URL=https://yourdomain.com
-
-# Mailing (Mixmax)
-MIXMAX_API_KEY=...
-MIXMAX_WEBHOOK_SECRET=...
-
-# Land Registry
-HMLR_API_KEY=...
-
-# Cron security (any random secret string)
-CRON_SECRET=generate_random_string_here
-```
-
-> Only `DASHBOARD_PASSWORD` is required to run the app locally. All other keys enable specific features.
-
-### 4. Set up the database
-
-```bash
-npx prisma migrate deploy
-```
-
-This creates `prisma/dev.db` (SQLite file).
-
-### 5. Run the dev server
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000). Login with the `DASHBOARD_PASSWORD` you set.
-
----
-
-## Deploy to Railway
-
-Railway supports persistent volumes, which is required for SQLite.
-
-### Step 1 — Create Railway project
-
-1. Go to [railway.app](https://railway.app/) → **New Project**
-2. Choose **Deploy from GitHub repo**
-3. Connect your GitHub account and select this repo
-4. Railway will detect Next.js automatically
-
-### Step 2 — Add a persistent volume (required for SQLite)
-
-SQLite writes to disk. Without a volume, data resets on every deploy.
-
-1. In your Railway project, click your service
-2. Go to **Volumes** tab → **Add Volume**
-3. Set **Mount Path** to `/app/prisma`
-4. Click **Add**
-
-This mounts persistent storage at `/app/prisma`, keeping `dev.db` across deploys.
-
-### Step 3 — Set environment variables
-
-In Railway: **Service → Variables** tab, add all variables from the `.env.local` template above.
-
-**Required for production:**
-
-| Variable | Value |
-|---|---|
-| `DASHBOARD_PASSWORD` | Strong password for login |
-| `NODE_ENV` | `production` |
-| `CRON_SECRET` | Random secret string |
-
-Add any other keys for the features you want enabled.
-
-### Step 4 — Set build and start commands
-
-In Railway: **Service → Settings → Deploy**
-
-- **Build Command:** `npm run build`
-- **Start Command:** `npm start`
-
-Or add a `railway.toml` to the repo root:
-
-```toml
-[build]
-builder = "nixpacks"
-buildCommand = "npm run build"
-
-[deploy]
-startCommand = "npx prisma migrate deploy && npm start"
-restartPolicyType = "on_failure"
-```
-
-Using `railway.toml` is recommended — it runs migrations automatically before each deploy.
-
-### Step 5 — Deploy
-
-Push to your connected branch (usually `main`). Railway builds and deploys automatically.
-
-First deploy: Railway runs `npx prisma migrate deploy` (via the start command above), creating the database schema.
-
-### Step 6 — Access your app
-
-Railway provides a public URL under **Service → Settings → Networking → Generate Domain**.
-
-Login with your `DASHBOARD_PASSWORD`.
-
----
-
-## Setting Up on a New Machine
-
-```bash
-# 1. Clone
-git clone <your-repo-url>
-cd autom
-
-# 2. Install
-npm install
-
-# 3. Create .env.local (copy template from above, fill in values)
-
-# 4. Init database
-npx prisma migrate deploy
-
-# 5. Run
-npm run dev
-```
-
----
-
-## Environment Variables Reference
-
-| Variable | Required | Description |
+| Surface | What it does | Status today |
 |---|---|---|
-| `DASHBOARD_PASSWORD` | Yes | Password to access the dashboard |
-| `CRON_SECRET` | Yes (prod) | Secures cron job API endpoints |
-| `ANTHROPIC_API_KEY` | For AI features | Claude API key |
-| `OPENAI_API_KEY` | For AI features | OpenAI API key |
-| `RESEND_API_KEY` | For email alerts | Resend API key |
-| `ALERT_EMAIL_FROM` | For email alerts | Sender address |
-| `ALERT_EMAIL_TO` | For email alerts | Recipient address |
-| `AYRSHARE_API_KEY` | For social posting | Ayrshare API key |
-| `META_ACCESS_TOKEN` | For Meta ads | Meta Graph API token |
-| `META_AD_ACCOUNT_ID` | For Meta ads | Ad account ID (format: `act_123`) |
-| `META_PAGE_ID` | For Meta ads | Facebook Page ID |
-| `META_WEBSITE_URL` | For Meta ads | Your website URL |
-| `MIXMAX_API_KEY` | For mailing | Mixmax API key |
-| `MIXMAX_WEBHOOK_SECRET` | For mailing webhooks | Mixmax webhook secret |
-| `HMLR_API_KEY` | For land registry | HMLR API key |
+| **Sourcing** | Auto-scrapes 27 London borough planning portals for ≥10-unit applications | live |
+| **Decisions** | Polls tracked applications for status changes (approved/refused) | live |
+| **Documents** | Pulls planning PDFs from council portals + (optional) Land Registry titles via HMLR | live (HMLR needs key) |
+| **AI Content Factory** | Claude drafts per-platform social copy; DALL·E generates images; PDF text from documents enriches the prompt | live |
+| **Social posting** | Draft-only mode — staff reviews drafts on the dashboard, approves, copies/pastes manually to their socials. No third-party publisher | live |
+| **Mailing** | Segmented outreach to architects/developers/investors. Resend by default; falls back to Mixmax if `MIXMAX_API_KEY` is set | live (via Resend) |
+| **Invoicing** | Monthly auto-bill IdealLand's own clients. Xero stubbed — marks sent locally without `XERO_CLIENT_ID`; pushes to Xero with it | live (stub mode) |
+| **Cron** | Single `/api/cron` endpoint runs sourcing + decisions + documents on a schedule. Bearer-auth via `CRON_SECRET` | live |
 
----
+## Local development
 
-## Database Notes
+```bash
+git clone https://github.com/Ahmedmkarrar/idealland-ai-system.git
+cd idealland-ai-system
+npm install
+cp deploy/env.template .env.local   # fill in keys
+npx prisma migrate dev
+npm run dev -- --webpack            # NOT plain `npm run dev` — see below
+```
 
-- Uses SQLite via `prisma/dev.db`
-- On Railway: must have a persistent volume mounted at `/app/prisma`
-- Migrations live in `prisma/migrations/` — run `npx prisma migrate deploy` to apply
-- To inspect the DB locally: `npx prisma studio`
+Open http://localhost:3000 and login with `DASHBOARD_PASSWORD`.
 
----
+> **Why `--webpack`?** The Turbopack native binary `@next/swc-darwin-arm64` is corrupted in some installs (segfault on load). Webpack mode bypasses it. If you want Turbopack back, try `rm -rf node_modules/@next/swc-* && npm install`.
 
-## Tech Stack
+## Production deploy
 
-- **Framework:** Next.js 16 (App Router)
-- **Database:** SQLite + Prisma ORM
-- **Styling:** Tailwind CSS v4 + shadcn/ui
-- **AI:** Anthropic Claude + OpenAI
-- **Email:** Resend
-- **Social:** Ayrshare
-- **Charts:** Recharts
+**Target:** $6/mo DigitalOcean droplet (Ubuntu 24.04). See **[`deploy/README.md`](deploy/README.md)** for the full runbook.
+
+TL;DR:
+
+```bash
+# On a fresh droplet, as root:
+bash deploy/setup-droplet.sh
+
+# Then as the idealland user:
+git clone https://github.com/Ahmedmkarrar/idealland-ai-system.git
+cd idealland-ai-system
+cp deploy/env.template .env.local && nano .env.local
+bash deploy/deploy.sh                        # first deploy
+sudo bash -c 'cp deploy/nginx.conf.template /etc/nginx/sites-available/idealland'
+# edit nginx file to set SERVER_NAME, symlink, reload nginx
+sudo certbot --nginx -d your-domain.tld      # HTTPS
+bash deploy/install-cron.sh                  # 4-hourly cron
+```
+
+Future deploys are one command: `bash deploy/deploy.sh` (git pull, prisma generate, prisma migrate deploy, next build, pm2 reload).
+
+## Environment variables
+
+Only **two are strictly required** to boot. Everything else is feature-gated — services short-circuit gracefully when their key isn't set.
+
+| Variable | Required? | What it unlocks |
+|---|---|---|
+| `DASHBOARD_PASSWORD` | yes | Login |
+| `CRON_SECRET` | yes (prod) | Authorizes `/api/cron` |
+| `ANTHROPIC_API_KEY` | for AI | Claude (social drafts, PDF-aware content) |
+| `OPENAI_API_KEY` | for AI | DALL·E images |
+| `RESEND_API_KEY` | for email | Planning alerts + outreach mail (covers mailing if Mixmax absent) |
+| `ALERT_EMAIL_FROM` | for email | Sender address (must match a verified Resend domain in prod) |
+| `ALERT_EMAIL_TO` | for email | Where alerts land |
+| `HMLR_API_KEY` | for HMLR | Land Registry title pulls |
+| `MIXMAX_API_KEY` | optional | Outreach mailer with open/click tracking (Resend covers if blank) |
+| `MIXMAX_WEBHOOK_SECRET` | optional | Mixmax webhook signing |
+| `XERO_CLIENT_ID` + 5 more | optional | Real Xero invoice pushes. Without these, invoices mark sent locally |
+
+Full template: [`deploy/env.template`](deploy/env.template).
+
+## Stack
+
+- **Next.js 16** (App Router, webpack mode in dev — see note above)
+- **Prisma 7.8** + **SQLite** (`better-sqlite3` driver adapter, no driverAdapters preview)
+- **Tailwind v4** + **shadcn/ui** (base-ui under the hood — NOT Radix; no `asChild` pattern)
+- **Anthropic Claude** (`claude-haiku-4-5`) for content drafting
+- **OpenAI** (`gpt-4o-mini`, DALL·E 3) for fallback + images
+- **Resend** for transactional + outreach email
+- **unpdf** for PDF text extraction → Claude context
+- **PM2** + **Nginx** + **Let's Encrypt** + **Linux cron** in production
+
+## Repo conventions
+
+- **Branches**: `main` is the production line. Feature work goes on `feat/*` or `mvp/*` branches.
+- **Memory of decisions**: see `docs/` — `AUTOMATIONS_OVERVIEW.md` (what each surface does), `CLIENT_API_SETUP.md` (key procurement), `CLIENT_PROPOSAL.md` (sales pitch), `LUCY_NEXT_MESSAGE.md` (current client comms draft).
+- **Pre-Next-16 patterns will not work**: this is Next 16, App Router. Read `AGENTS.md` before writing routing/middleware code.
+
+## Operations
+
+| Want to | On the droplet (`idealland` user) |
+|---|---|
+| See live logs | `pm2 logs idealland` |
+| Health check | `bash deploy/healthcheck.sh` |
+| Manual cron | `bash deploy/run-cron.sh` |
+| Redeploy | `bash deploy/deploy.sh` |
+| Restore DB | `cp /var/backups/idealland/dev-YYYY-MM-DD.db prisma/dev.db && pm2 restart idealland` |
