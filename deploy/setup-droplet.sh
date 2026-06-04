@@ -68,8 +68,14 @@ pm2 startup systemd -u idealland --hp /home/idealland | tail -1 | bash || true
 echo "[8/8] Daily SQLite backup cron (root crontab, runs at 3 AM)"
 mkdir -p /var/backups/idealland
 chown idealland:idealland /var/backups/idealland
-BACKUP_LINE='0 3 * * * /usr/bin/sqlite3 /home/idealland/idealland-ai-system/prisma/dev.db ".backup /var/backups/idealland/dev-$(date +\%Y-\%m-\%d).db" && /usr/bin/find /var/backups/idealland -name "dev-*.db" -mtime +14 -delete'
-( crontab -l 2>/dev/null | grep -v "idealland.*dev.db" ; echo "$BACKUP_LINE" ) | crontab -
+# Write the cron line to a file (avoids quote-mangling on heredoc-over-ssh).
+cat > /tmp/idealland-backup.cron <<'CRON_EOF'
+0 3 * * * /usr/bin/sqlite3 /home/idealland/idealland-ai-system/prisma/dev.db ".backup /var/backups/idealland/dev-$(date +\%Y-\%m-\%d).db" && /usr/bin/find /var/backups/idealland -name "dev-*.db" -mtime +14 -delete
+CRON_EOF
+# Idempotent: strip any prior idealland line, append the new one. The leading
+# `:` keeps the pipeline OK under `set -o pipefail` when no crontab exists yet.
+{ crontab -l 2>/dev/null || :; } | grep -v "idealland.*dev.db" | { cat -; cat /tmp/idealland-backup.cron; } | crontab -
+rm -f /tmp/idealland-backup.cron
 echo "  cron installed: daily backup at 3am, 14-day retention"
 
 echo ""

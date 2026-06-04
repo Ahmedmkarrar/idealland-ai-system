@@ -41,3 +41,19 @@ yarn-error.log*
 next-env.d.ts
 
 /lib/generated/prisma
+
+# Local SQLite DB — production creates its own via `prisma migrate deploy`
+prisma/dev.db
+prisma/dev.db-journal
+prisma/*.db-journal
+
+# OS
+Thumbs.db
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Build artefacts that don't belong in git
+.tsbuildinfo

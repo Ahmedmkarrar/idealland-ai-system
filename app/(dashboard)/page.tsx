@@ -16,6 +16,9 @@ import {
   CheckCircle,
   Clock,
   Settings,
+  Activity,
+  Database,
+  Zap,
 } from "lucide-react";
 
 interface ConfigStatus {
@@ -41,6 +44,46 @@ interface Stats {
     startedAt: string;
     completedAt: string | null;
   }>;
+}
+
+interface Health {
+  ok: boolean;
+  uptimeSeconds: number;
+  dbReachable: boolean;
+  dbLatencyMs: number | null;
+  lastCronAt: string | null;
+  lastCronStatus: string | null;
+  checkedAt: string;
+}
+
+function formatUptime(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
+}
+
+function formatRelative(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ${mins % 60}m ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+// Cron fires at 0 */4 * * * — figure out the next 4-hour boundary in UTC
+function nextCronRelative(): string {
+  const now = new Date();
+  const next = new Date(now);
+  const hour = now.getUTCHours();
+  const nextHour = Math.ceil((hour + 1) / 4) * 4;
+  next.setUTCHours(nextHour, 0, 0, 0);
+  if (next <= now) next.setUTCHours(next.getUTCHours() + 4);
+  const diffMin = Math.round((next.getTime() - now.getTime()) / 60_000);
+  if (diffMin < 60) return `in ${diffMin} min`;
+  return `in ${Math.floor(diffMin / 60)}h ${diffMin % 60}m`;
 }
 
 const RUN_TYPE_LABELS: Record<string, string> = {
@@ -70,19 +113,23 @@ const CONFIG_LABELS: Array<{ key: keyof ConfigStatus; label: string; description
 export default function OverviewPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
   const [isSeeding, setIsSeeding] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [hasData, setHasData] = useState(true);
 
   const fetchStats = useCallback(async () => {
-    const [statsRes, configRes] = await Promise.all([
+    const [statsRes, configRes, healthRes] = await Promise.all([
       fetch("/api/stats"),
       fetch("/api/config-status"),
+      fetch("/api/health"),
     ]);
     const data = await statsRes.json();
     const config = await configRes.json();
+    const healthData = await healthRes.json();
     setStats(data);
     setConfigStatus(config);
+    setHealth(healthData);
     setHasData(data.sourcing.totalApplications > 0);
   }, []);
 
@@ -173,6 +220,60 @@ export default function OverviewPage() {
           </Button>
         </div>
       </div>
+
+      {health && (
+        <Card className={health.ok ? "border-green-200 bg-green-50/40" : "border-red-200 bg-red-50/60"}>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Activity className={`w-4 h-4 ${health.ok ? "text-green-600" : "text-red-600"}`} />
+              System Health
+              <Badge className={`text-xs ml-1 ${health.ok ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`} variant="outline">
+                {health.ok ? "live" : "down"}
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-4 gap-4">
+              <div className="flex items-start gap-2">
+                <Zap className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-xs text-muted-foreground">Uptime</p>
+                  <p className="text-sm font-semibold">{formatUptime(health.uptimeSeconds)}</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <Database className={`w-4 h-4 mt-0.5 shrink-0 ${health.dbReachable ? "text-green-600" : "text-red-600"}`} />
+                <div>
+                  <p className="text-xs text-muted-foreground">Database</p>
+                  <p className="text-sm font-semibold">
+                    {health.dbReachable
+                      ? `${health.dbLatencyMs ?? "?"} ms`
+                      : "unreachable"}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <Clock className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-xs text-muted-foreground">Last cron run</p>
+                  <p className="text-sm font-semibold">
+                    {health.lastCronAt
+                      ? <>{formatRelative(health.lastCronAt)} <span className="text-xs text-muted-foreground font-normal">· {health.lastCronStatus}</span></>
+                      : "never"}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <RefreshCw className="w-4 h-4 text-purple-600 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-xs text-muted-foreground">Next cron run</p>
+                  <p className="text-sm font-semibold">{nextCronRelative()}</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {configStatus && (
         <Card>

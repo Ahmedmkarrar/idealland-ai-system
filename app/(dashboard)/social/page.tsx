@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { RefreshCw, Wand2, Video, CheckCircle, XCircle, Clock } from "lucide-react";
+import { RefreshCw, Wand2, Video, CheckCircle, XCircle, Clock, Copy, Check } from "lucide-react";
 
 interface SocialPost {
   id: string;
@@ -14,10 +14,6 @@ interface SocialPost {
   status: string;
   approvalStatus: string | null;
   imageUrl: string | null;
-  scheduledAt: string | null;
-  publishedAt: string | null;
-  engagements: number;
-  reach: number;
   createdAt: string;
 }
 
@@ -35,12 +31,33 @@ const PLATFORM_COLORS: Record<string, string> = {
   facebook: "bg-indigo-100 text-indigo-800",
 };
 
+// Three real states for the draft-only workflow:
+//   draft     = AI just wrote it, waiting for staff review
+//   approved  = staff reviewed + approved, ready to copy/paste to socials
+//   rejected  = staff rejected, kept for audit
+// (Legacy values "scheduled"/"published" from the old auto-publish model are
+//  mapped to "approved" so old DB rows still render sensibly.)
 const STATUS_COLORS: Record<string, string> = {
   draft: "bg-gray-100 text-gray-700",
-  scheduled: "bg-yellow-100 text-yellow-800",
+  approved: "bg-green-100 text-green-800",
+  rejected: "bg-red-100 text-red-800",
   published: "bg-green-100 text-green-800",
+  scheduled: "bg-green-100 text-green-800",
   failed: "bg-red-100 text-red-800",
 };
+
+const STATUS_LABEL: Record<string, string> = {
+  draft: "draft",
+  approved: "ready to copy",
+  published: "ready to copy",
+  scheduled: "ready to copy",
+  rejected: "rejected",
+  failed: "rejected",
+};
+
+function isReadyToCopy(status: string): boolean {
+  return status === "approved" || status === "published" || status === "scheduled";
+}
 
 export default function SocialPage() {
   const [posts, setPosts] = useState<SocialPost[]>([]);
@@ -49,6 +66,7 @@ export default function SocialPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [platformFilter, setPlatformFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
@@ -103,15 +121,22 @@ export default function SocialPage() {
     setRejectingId(null);
   };
 
+  const handleCopy = async (post: SocialPost) => {
+    try {
+      await navigator.clipboard.writeText(post.content);
+      setCopiedId(post.id);
+      setTimeout(() => setCopiedId((id) => (id === post.id ? null : id)), 1800);
+    } catch {
+      // Clipboard API blocked (insecure context, etc.) — fall back to alert
+      alert("Copy blocked by browser. Select the text and copy manually.");
+    }
+  };
+
   const platformStats = ["instagram", "linkedin", "tiktok", "facebook"].map((platform) => {
     const platformPosts = posts.filter((p) => p.platform === platform);
-    const published = platformPosts.filter((p) => p.status === "published");
-    return {
-      platform,
-      total: platformPosts.length,
-      published: published.length,
-      totalReach: published.reduce((sum, p) => sum + p.reach, 0),
-    };
+    const ready = platformPosts.filter((p) => isReadyToCopy(p.status)).length;
+    const drafts = platformPosts.filter((p) => p.status === "draft").length;
+    return { platform, total: platformPosts.length, ready, drafts };
   });
 
   return (
@@ -120,7 +145,7 @@ export default function SocialPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Social Content</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            AI-drafted posts across Instagram, LinkedIn, TikTok, Facebook — review, approve, copy to your socials manually
+            AI drafts copy for Instagram, LinkedIn, TikTok and Facebook. Review, approve, then copy/paste into your socials.
           </p>
         </div>
         <div className="flex gap-2">
@@ -157,7 +182,7 @@ export default function SocialPage() {
                           {new Date(post.createdAt).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}
                         </span>
                       </div>
-                      <p className="text-sm leading-relaxed text-gray-800">{post.content}</p>
+                      <p className="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap">{post.content}</p>
                       {post.imageUrl && (
                         <p className="text-xs text-muted-foreground mt-2">Image attached</p>
                       )}
@@ -172,8 +197,7 @@ export default function SocialPage() {
                       >
                         {rejectingId === post.id
                           ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          : <XCircle className="w-3.5 h-3.5 mr-1" />}
-                        Reject
+                          : <><XCircle className="w-3.5 h-3.5 mr-1" />Reject</>}
                       </Button>
                       <Button
                         size="sm"
@@ -183,8 +207,7 @@ export default function SocialPage() {
                       >
                         {approvingId === post.id
                           ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          : <CheckCircle className="w-3.5 h-3.5 mr-1" />}
-                        Approve & Schedule
+                          : <><CheckCircle className="w-3.5 h-3.5 mr-1" />Approve</>}
                       </Button>
                     </div>
                   </div>
@@ -196,7 +219,7 @@ export default function SocialPage() {
       )}
 
       <div className="grid grid-cols-4 gap-4">
-        {platformStats.map(({ platform, total, published, totalReach }) => (
+        {platformStats.map(({ platform, total, ready, drafts }) => (
           <Card key={platform}>
             <CardContent className="pt-4 pb-4">
               <div className="flex items-center gap-2 mb-2">
@@ -207,7 +230,7 @@ export default function SocialPage() {
               </div>
               <p className="text-2xl font-bold">{total}</p>
               <p className="text-xs text-muted-foreground mt-1">
-                {published} published · {totalReach.toLocaleString()} reach
+                {ready} ready · {drafts} pending
               </p>
             </CardContent>
           </Card>
@@ -232,14 +255,14 @@ export default function SocialPage() {
                 </SelectContent>
               </Select>
               <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "all")}>
-                <SelectTrigger className="w-32">
+                <SelectTrigger className="w-36">
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All statuses</SelectItem>
                   <SelectItem value="draft">Draft</SelectItem>
-                  <SelectItem value="scheduled">Scheduled</SelectItem>
-                  <SelectItem value="published">Published</SelectItem>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -256,40 +279,50 @@ export default function SocialPage() {
             <div className="text-center py-12">
               <Wand2 className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
               <p className="text-sm text-muted-foreground">
-                No posts yet. Click &ldquo;Generate Posts&rdquo; to create content from recent planning applications.
+                No posts yet. Click &ldquo;Generate Posts&rdquo; to draft content from recent planning applications.
               </p>
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-4">
-              {posts.map((post) => (
-                <div key={post.id} className="border rounded-lg p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${PLATFORM_COLORS[post.platform]}`}>
-                      {PLATFORM_ICONS[post.platform]}
-                      {post.platform.charAt(0).toUpperCase() + post.platform.slice(1)}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      {post.approvalStatus === "pending_review" && (
-                        <Badge className="text-xs bg-amber-100 text-amber-800" variant="outline">review</Badge>
+              {posts.map((post) => {
+                const ready = isReadyToCopy(post.status);
+                return (
+                  <div key={post.id} className="border rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${PLATFORM_COLORS[post.platform]}`}>
+                        {PLATFORM_ICONS[post.platform]}
+                        {post.platform.charAt(0).toUpperCase() + post.platform.slice(1)}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {post.approvalStatus === "pending_review" && (
+                          <Badge className="text-xs bg-amber-100 text-amber-800" variant="outline">review</Badge>
+                        )}
+                        <Badge className={`text-xs ${STATUS_COLORS[post.status] ?? "bg-gray-100 text-gray-700"}`} variant="outline">
+                          {STATUS_LABEL[post.status] ?? post.status}
+                        </Badge>
+                      </div>
+                    </div>
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{post.content}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(post.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                      </span>
+                      {ready && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2.5 text-xs"
+                          onClick={() => handleCopy(post)}
+                        >
+                          {copiedId === post.id
+                            ? <><Check className="w-3 h-3 mr-1 text-green-600" />Copied</>
+                            : <><Copy className="w-3 h-3 mr-1" />Copy</>}
+                        </Button>
                       )}
-                      <Badge className={`text-xs ${STATUS_COLORS[post.status] ?? "bg-gray-100 text-gray-700"}`} variant="outline">
-                        {post.status}
-                      </Badge>
                     </div>
                   </div>
-                  <p className="text-sm leading-relaxed">{post.content}</p>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    {post.status === "published" ? (
-                      <span>{post.reach.toLocaleString()} reach · {post.engagements} engagements</span>
-                    ) : post.scheduledAt ? (
-                      <span>Scheduled: {new Date(post.scheduledAt).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}</span>
-                    ) : (
-                      <span>Draft</span>
-                    )}
-                    <span>{new Date(post.createdAt).toLocaleDateString("en-GB")}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </CardContent>
