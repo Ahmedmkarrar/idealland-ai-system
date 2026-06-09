@@ -17,8 +17,12 @@ if [ -z "$CRON_SECRET" ]; then
   exit 1
 fi
 
-# 5-minute timeout — cron typically takes 2-4 min
-RESPONSE=$(curl -sS --max-time 300 \
+# 15-minute timeout — cron does 27 borough scrapes with 2-6s random delays
+# between each plus 800-1800ms between paginated pages (anti-bot pacing).
+# Worst case: 27 * 6s + 27 * 3 pages * 15s timeout = ~1300s upper bound but
+# typical run is 5-8 min. 900s gives plenty of headroom without leaving a
+# stuck curl for an hour.
+RESPONSE=$(curl -sS --max-time 900 \
   -H "Authorization: Bearer $CRON_SECRET" \
   http://127.0.0.1:3000/api/cron 2>&1) || {
   echo "$(date -Iseconds) ERROR: cron call failed: $RESPONSE" >&2
