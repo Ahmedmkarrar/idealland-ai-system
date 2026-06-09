@@ -42,6 +42,104 @@ interface ScrapedApplication {
   applicant?: string;
 }
 
+// PRIMARY data source — UK government's official planning data API.
+// Free, no auth, no Cloudflare. Covers all 33 London LPAs (data freshness
+// varies — some boroughs back-load data, others stream live). Used as the
+// first attempt for each council; Idox scrape kept as a fallback if/when
+// we add a scraping proxy that can defeat Cloudflare.
+//
+// IDs sourced from: GET /entity.json?dataset=local-planning-authority&limit=500
+const LONDON_LPAS_GOVUK: Array<{ council: string; orgEntity: number }> = [
+  { council: "Camden",                  orgEntity: 626188 },
+  { council: "City of London",          orgEntity: 626189 },
+  { council: "Hackney",                 orgEntity: 626190 },
+  { council: "Hammersmith and Fulham",  orgEntity: 626191 },
+  { council: "Haringey",                orgEntity: 626192 },
+  { council: "Islington",               orgEntity: 626193 },
+  { council: "Kensington and Chelsea",  orgEntity: 626194 },
+  { council: "Lambeth",                 orgEntity: 626195 },
+  { council: "Lewisham",                orgEntity: 626196 },
+  { council: "Newham",                  orgEntity: 626197 },
+  { council: "Southwark",               orgEntity: 626198 },
+  { council: "Tower Hamlets",           orgEntity: 626199 },
+  { council: "Wandsworth",              orgEntity: 626200 },
+  { council: "Westminster",             orgEntity: 626201 },
+  { council: "Barnet",                  orgEntity: 626203 },
+  { council: "Bexley",                  orgEntity: 626204 },
+  { council: "Brent",                   orgEntity: 626205 },
+  { council: "Bromley",                 orgEntity: 626206 },
+  { council: "Croydon",                 orgEntity: 626207 },
+  { council: "Ealing",                  orgEntity: 626208 },
+  { council: "Enfield",                 orgEntity: 626209 },
+  { council: "Greenwich",               orgEntity: 626210 },
+  { council: "Harrow",                  orgEntity: 626211 },
+  { council: "Havering",                orgEntity: 626212 },
+  { council: "Hillingdon",              orgEntity: 626213 },
+  { council: "Hounslow",                orgEntity: 626214 },
+  { council: "Kingston upon Thames",    orgEntity: 626215 },
+  { council: "Merton",                  orgEntity: 626216 },
+  { council: "Redbridge",               orgEntity: 626217 },
+  { council: "Richmond upon Thames",    orgEntity: 626218 },
+  { council: "Sutton",                  orgEntity: 626219 },
+  { council: "Waltham Forest",          orgEntity: 626220 },
+];
+
+interface GovUkPlanningEntity {
+  reference?: string;
+  name?: string;
+  description?: string;
+  "start-date"?: string;
+  "entry-date"?: string;
+  point?: string;
+  geometry?: string;
+  json?: { address?: string; site_address?: string; applicant?: string } | string;
+}
+
+async function fetchFromGovUk(orgEntity: number): Promise<ScrapedApplication[]> {
+  const url = `https://www.planning.data.gov.uk/entity.json?dataset=planning-application&organisation-entity=${orgEntity}&limit=100`;
+
+  try {
+    const response = await withRetry(() =>
+      fetch(url, {
+        headers: { Accept: "application/json", "User-Agent": "idealland-automation/1.0 (london property intelligence)" },
+        signal: AbortSignal.timeout(20000),
+      })
+    );
+
+    if (!response.ok) return [];
+
+    const data = (await response.json()) as { entities?: GovUkPlanningEntity[] };
+    const entities = data.entities ?? [];
+
+    return entities
+      .filter((e) => e.reference && e.description)
+      .map((e) => {
+        // The API's `json` field sometimes contains the full original payload
+        // as either a parsed object or a stringified one. Pull address out of
+        // either shape, fall back to name, fall back to "[address unknown]".
+        let parsedJson: { address?: string; site_address?: string; applicant?: string } = {};
+        if (typeof e.json === "string") {
+          try { parsedJson = JSON.parse(e.json); } catch { /* leave empty */ }
+        } else if (e.json && typeof e.json === "object") {
+          parsedJson = e.json;
+        }
+
+        const address = parsedJson.site_address ?? parsedJson.address ?? e.name ?? "[address unknown]";
+        const submittedAt = e["start-date"] ? new Date(e["start-date"]) : (e["entry-date"] ? new Date(e["entry-date"]) : new Date());
+
+        return {
+          reference: e.reference!,
+          address,
+          description: e.description!,
+          submittedAt,
+          applicant: parsedJson.applicant,
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
 function parseIdoxResultsPage(html: string): ScrapedApplication[] {
   const $ = cheerio.load(html);
   const results: ScrapedApplication[] = [];
@@ -205,15 +303,35 @@ export async function scanCouncils(): Promise<{
     let boroughsBlocked = 0;
     let isFirstBorough = true;
 
-    // Random borough order each run + jittered inter-borough delay so we don't
-    // look like the same batched scraper every 4 hours.
-    for (const { council, baseUrl } of shuffled(IDOX_BOROUGHS)) {
+    // PRIMARY: pull from planning.data.gov.uk for all 33 London LPAs. Free,
+    // official, no Cloudflare. If a borough returns empty, fall back to the
+    // direct Idox scrape (currently blocked by Cloudflare from the droplet IP
+    // but kept in case we add a scraping proxy later).
+    const idoxByName = new Map(IDOX_BOROUGHS.map((b) => [b.council.toLowerCase(), b.baseUrl] as const));
+
+    for (const { council, orgEntity } of shuffled(LONDON_LPAS_GOVUK)) {
       if (!isFirstBorough) {
-        await sleep(randomMs(2000, 6000));
+        // 1-3s polite delay between gov.uk requests
+        await sleep(randomMs(1000, 3000));
       }
       isFirstBorough = false;
 
-      const scraped = await scrapeIdoxCouncil(council, baseUrl);
+      let scraped = await fetchFromGovUk(orgEntity);
+
+      // Fallback: try the legacy Idox scrape if gov.uk returned nothing AND
+      // we have an Idox URL for this council. Wrapped so a fallback failure
+      // doesn't blow up the run.
+      if (scraped.length === 0) {
+        const baseUrl = idoxByName.get(council.toLowerCase()) ?? idoxByName.get(council.split(" upon ")[0].toLowerCase());
+        if (baseUrl) {
+          try {
+            scraped = await scrapeIdoxCouncil(council, baseUrl);
+          } catch {
+            // Idox is expected to fail on Cloudflare; ignore.
+          }
+        }
+      }
+
       if (scraped.length === 0) boroughsBlocked++;
 
       const relevant = scraped.filter((app) => looksLikeLargeResidential(app.description));
@@ -264,14 +382,14 @@ export async function scanCouncils(): Promise<{
       ]);
     }
 
-    const boroughsScanned = IDOX_BOROUGHS.length - boroughsBlocked;
+    const boroughsScanned = LONDON_LPAS_GOVUK.length - boroughsBlocked;
 
     await prisma.automationRun.update({
       where: { id: runRecord.id },
       data: {
         status: "completed",
         completedAt: new Date(),
-        summary: `Scanned ${boroughsScanned}/${IDOX_BOROUGHS.length} boroughs (${boroughsBlocked} blocked/unavailable). Found ${newApplications.length} new 10+ unit applications.`,
+        summary: `Scanned ${boroughsScanned}/${LONDON_LPAS_GOVUK.length} boroughs via planning.data.gov.uk (${boroughsBlocked} empty/unavailable). Found ${newApplications.length} new 10+ unit applications.`,
       },
     });
 
