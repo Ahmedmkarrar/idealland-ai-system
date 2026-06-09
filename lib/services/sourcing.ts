@@ -124,7 +124,11 @@ async function fetchFromGovUk(orgEntity: number): Promise<ScrapedApplication[]> 
           parsedJson = e.json;
         }
 
-        const address = parsedJson.site_address ?? parsedJson.address ?? e.name ?? "[address unknown]";
+        // gov.uk API doesn't expose addresses (geometry/point fields are
+        // typically empty too). Fall back to the reference, which is what
+        // IdealLand staff will use to look the application up in the council
+        // portal anyway. Future: reverse-geocode the point field when present.
+        const address = parsedJson.site_address ?? parsedJson.address ?? (e.name && e.name.length > 0 ? e.name : `Ref ${e.reference}`);
         const submittedAt = e["start-date"] ? new Date(e["start-date"]) : (e["entry-date"] ? new Date(e["entry-date"]) : new Date());
 
         return {
@@ -262,21 +266,50 @@ const UNIT_PATTERNS = [
   /(\d+)\s*(?:x\s*)?(?:affordable|market|private)\s+(?:residential\s+)?(?:unit|flat|home|dwelling)/i,
 ];
 
+// Return the explicit unit count from the description, or 0 if none found.
+// (Old behaviour defaulted to 10, which let through every small extension
+// that happened to contain the word "dwelling". Now we require an actual
+// number.)
 function extractUnitCount(description: string): number {
   for (const pattern of UNIT_PATTERNS) {
     const match = description.match(pattern);
-    if (match?.[1]) return parseInt(match[1], 10);
+    if (match?.[1]) {
+      const n = parseInt(match[1], 10);
+      if (Number.isFinite(n)) return n;
+    }
   }
-  return 10;
+  return 0;
+}
+
+// Common "tiny" application keywords — if the description matches any of
+// these without ALSO containing a clear multi-unit indicator, it's almost
+// certainly a domestic extension, not a development opportunity.
+const TINY_APPLICATION_PATTERNS = [
+  /\b(rear|front|side|loft|garage|porch|outbuilding|conservatory|garden\s+room|shed|fence|tree)\s+(extension|conversion|alteration|works?)/i,
+  /\bsingle\s+(storey|story)\s+(rear|front|side|infill)\s+extension/i,
+  /\binternal\s+alterations?\b/i,
+  /\bchange\s+of\s+use\s+from\s+\w+\s+to\s+(single\s+)?(dwelling|residential)\s*(house|unit)?\s*(only|\.|\,|$)/i,
+  /\bdwelling\s+(house|extension)\b.*?\b(single|one|1)\b/i,
+];
+
+function looksLikeTinyApplication(description: string): boolean {
+  return TINY_APPLICATION_PATTERNS.some((p) => p.test(description));
 }
 
 function looksLikeLargeResidential(description: string): boolean {
+  if (looksLikeTinyApplication(description)) return false;
+
+  const units = extractUnitCount(description);
+  if (units >= 10) return true;
+
+  // Fallback for descriptions that don't mention units numerically but
+  // describe substantial schemes (blocks, towers, major redevelopment).
   const lower = description.toLowerCase();
-  const hasResidentialWord = ["residential", "dwelling", "flat", "apartment", "unit", "home"].some(
-    (w) => lower.includes(w)
-  );
-  if (!hasResidentialWord) return false;
-  return extractUnitCount(description) >= 10;
+  const hasMajorSchemeKeyword =
+    /\b(block\s+of\s+(flats|apartments)|residential\s+block|residential\s+tower|major\s+redevelopment|comprehensive\s+redevelopment|mixed[\s-]use\s+(scheme|development)|new\s+build\s+residential)/i.test(
+      description
+    );
+  return hasMajorSchemeKeyword && (lower.includes("residential") || lower.includes("dwelling") || lower.includes("flat") || lower.includes("apartment"));
 }
 
 export async function scanCouncils(): Promise<{
