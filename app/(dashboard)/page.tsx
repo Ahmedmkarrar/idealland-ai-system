@@ -116,6 +116,7 @@ export default function OverviewPage() {
   const [health, setHealth] = useState<Health | null>(null);
   const [isSeeding, setIsSeeding] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
   const [hasData, setHasData] = useState(true);
 
   const fetchStats = useCallback(async () => {
@@ -148,6 +149,26 @@ export default function OverviewPage() {
     setIsRefreshing(true);
     await fetchStats();
     setIsRefreshing(false);
+  };
+
+  const handleRunScanNow = async () => {
+    setIsScanning(true);
+    const response = await fetch("/api/cron/trigger", { method: "POST" });
+    const result = await response.json();
+    if (result.sourcing) {
+      const s = result.sourcing as { found?: number; boroughsScanned?: number; boroughsBlocked?: number; error?: string };
+      if (s.error) {
+        alert(`Sourcing failed: ${s.error}`);
+      } else {
+        alert(
+          `Scan complete.\n` +
+          `Sourcing: ${s.found ?? 0} new (scanned ${s.boroughsScanned ?? 0}/27, blocked ${s.boroughsBlocked ?? 0}).\n` +
+          `See Recent Automation Runs below for full details.`
+        );
+      }
+    }
+    await fetchStats();
+    setIsScanning(false);
   };
 
   if (!stats) {
@@ -217,6 +238,13 @@ export default function OverviewPage() {
           <Button onClick={handleRefresh} disabled={isRefreshing} variant="outline" size="sm">
             <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
             Refresh
+          </Button>
+          <Button onClick={handleRunScanNow} disabled={isScanning} size="sm">
+            {isScanning ? (
+              <><RefreshCw className="w-4 h-4 mr-2 animate-spin" />Scanning (2-4 min)...</>
+            ) : (
+              <><Zap className="w-4 h-4 mr-2" />Run scan now</>
+            )}
           </Button>
         </div>
       </div>

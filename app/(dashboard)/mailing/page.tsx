@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
-import { RefreshCw, Plus, Send, Mail, Users, BarChart3 } from "lucide-react";
+import { RefreshCw, Plus, Send, Mail, Users, BarChart3, Sparkles, Check, AlertCircle } from "lucide-react";
 
 interface MailingCampaign {
   id: string;
@@ -32,6 +32,26 @@ interface MailingContact {
   createdAt: string;
 }
 
+interface OutreachEmail {
+  id: string;
+  applicationId: string;
+  contactEmail: string;
+  contactName: string;
+  subject: string;
+  body: string;
+  status: string;
+  sentAt: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  application: {
+    id: string;
+    reference: string;
+    council: string;
+    address: string;
+    units: number;
+  };
+}
+
 const STATUS_COLORS: Record<string, string> = {
   draft: "bg-gray-100 text-gray-700",
   sending: "bg-yellow-100 text-yellow-800",
@@ -48,23 +68,49 @@ const TYPE_COLORS: Record<string, string> = {
 export default function MailingPage() {
   const [campaigns, setCampaigns] = useState<MailingCampaign[]>([]);
   const [contacts, setContacts] = useState<MailingContact[]>([]);
+  const [outreach, setOutreach] = useState<OutreachEmail[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState<string | null>(null);
+  const [sendingOutreachId, setSendingOutreachId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
   const fetchData = useCallback(async () => {
-    const [campaignsRes, contactsRes] = await Promise.all([
+    const [campaignsRes, contactsRes, outreachRes] = await Promise.all([
       fetch("/api/mailing?view=campaigns"),
       fetch("/api/mailing?view=contacts"),
+      fetch("/api/outreach"),
     ]);
-    const [campaignsData, contactsData] = await Promise.all([
+    const [campaignsData, contactsData, outreachData] = await Promise.all([
       campaignsRes.json(),
       contactsRes.json(),
+      outreachRes.json(),
     ]);
     setCampaigns(campaignsData.campaigns);
     setContacts(contactsData.contacts);
+    setOutreach(outreachData.outreach ?? []);
     setIsLoading(false);
   }, []);
+
+  const handleSendOutreach = async (outreachId: string) => {
+    setSendingOutreachId(outreachId);
+    const response = await fetch(`/api/outreach/${outreachId}/send`, { method: "POST" });
+    const result = await response.json();
+    if (!result.ok) {
+      alert(`Send failed: ${result.reason ?? "unknown error"}`);
+    }
+    await fetchData();
+    setSendingOutreachId(null);
+  };
+
+  // Group outreach drafts by application so staff sees them per opportunity.
+  const outreachByApp = outreach.reduce<Record<string, OutreachEmail[]>>((acc, email) => {
+    const key = email.applicationId;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(email);
+    return acc;
+  }, {});
+
+  const pendingOutreachCount = outreach.filter((o) => o.status === "draft").length;
 
   useEffect(() => {
     fetchData();
@@ -139,11 +185,93 @@ export default function MailingPage() {
         ))}
       </div>
 
-      <Tabs defaultValue="campaigns">
+      <Tabs defaultValue={pendingOutreachCount > 0 ? "outreach" : "campaigns"}>
         <TabsList>
+          <TabsTrigger value="outreach">
+            <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+            AI Outreach Drafts {pendingOutreachCount > 0 && `(${pendingOutreachCount})`}
+          </TabsTrigger>
           <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
           <TabsTrigger value="contacts">Contacts ({contacts.length})</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="outreach" className="mt-4 space-y-4">
+          {Object.keys(outreachByApp).length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <Sparkles className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground">
+                  No outreach drafts yet. Go to <strong>Sourcing</strong>, expand an application, and click <strong>Draft Outreach</strong> to generate personalised cold emails.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            Object.entries(outreachByApp).map(([appId, emails]) => {
+              const app = emails[0].application;
+              const pending = emails.filter((e) => e.status === "draft").length;
+              const sent = emails.filter((e) => e.status === "sent").length;
+              return (
+                <Card key={appId}>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <CardTitle className="text-base">{app.address}</CardTitle>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {app.council} · {app.units} units · {app.reference}
+                        </p>
+                      </div>
+                      <div className="flex gap-2 text-xs">
+                        {pending > 0 && <Badge className="bg-amber-100 text-amber-800 border-0">{pending} pending</Badge>}
+                        {sent > 0 && <Badge className="bg-green-100 text-green-800 border-0">{sent} sent</Badge>}
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      {emails.map((email) => (
+                        <div key={email.id} className="border rounded-lg p-3 bg-card">
+                          <div className="flex items-start justify-between gap-3 mb-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold truncate">{email.subject}</p>
+                              <p className="text-xs text-muted-foreground">
+                                To: {email.contactName} &lt;{email.contactEmail}&gt;
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {email.status === "draft" && (
+                                <Button
+                                  size="sm"
+                                  className="h-7 px-2.5 text-xs"
+                                  onClick={() => handleSendOutreach(email.id)}
+                                  disabled={sendingOutreachId === email.id}
+                                >
+                                  {sendingOutreachId === email.id
+                                    ? <RefreshCw className="w-3 h-3 animate-spin" />
+                                    : <><Send className="w-3 h-3 mr-1" />Send</>}
+                                </Button>
+                              )}
+                              {email.status === "sent" && (
+                                <Badge className="bg-green-100 text-green-800 border-0 text-xs">
+                                  <Check className="w-3 h-3 mr-0.5" />sent
+                                </Badge>
+                              )}
+                              {email.status === "failed" && (
+                                <Badge className="bg-red-100 text-red-800 border-0 text-xs" title={email.errorMessage ?? ""}>
+                                  <AlertCircle className="w-3 h-3 mr-0.5" />failed
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                          <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-sans leading-relaxed bg-muted/50 rounded p-2">{email.body}</pre>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
+        </TabsContent>
 
         <TabsContent value="campaigns" className="mt-4 space-y-4">
           {isLoading ? (

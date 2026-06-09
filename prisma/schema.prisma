@@ -20,11 +20,17 @@ model PlanningApplication {
   decidedAt   DateTime?
   alertSent   Boolean  @default(false)
   decisionAlertSent Boolean @default(false)
+  // AI analysis (filled in by lib/services/intelligence.ts).
+  intelligenceSummary String?
+  leadScore           Int?     // 1-10
+  leadScoreReason     String?
+  analyzedAt          DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   documents   Document[]
   statusHistory ApplicationStatusChange[]
   socialPosts SocialPost[]
+  outreachEmails OutreachEmail[]
 }
 
 model ApplicationStatusChange {
@@ -128,6 +134,26 @@ model AutomationRun {
   startedAt   DateTime @default(now())
   completedAt DateTime?
   error       String?
+}
+
+// AI-drafted personalized cold email per (planning app, contact) pair.
+// Staff reviews on /mailing → approves → sent via Resend.
+model OutreachEmail {
+  id            String   @id @default(cuid())
+  applicationId String
+  application   PlanningApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  contactEmail  String
+  contactName   String
+  subject       String
+  body          String
+  status        String   @default("draft") // "draft" | "sent" | "skipped" | "failed"
+  sentAt        DateTime?
+  resendId      String?
+  errorMessage  String?
+  createdAt     DateTime @default(now())
+
+  @@index([applicationId])
+  @@index([status])
 }
 
 // IdealLand's own paying customers — clients we auto-bill via the invoicing

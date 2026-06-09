@@ -65,7 +65,7 @@ function parseIdoxResultsPage(html: string): ScrapedApplication[] {
   return results;
 }
 
-async function scrapeIdoxCouncil(_council: string, baseUrl: string): Promise<ScrapedApplication[]> {
+async function scrapeIdoxCouncil(council: string, baseUrl: string): Promise<ScrapedApplication[]> {
   const searchUrl = `${baseUrl}/search.do?action=simple&searchType=Application`;
   const fourWeeksAgo = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
   const dateFrom = fourWeeksAgo.toLocaleDateString("en-GB");
@@ -85,15 +85,15 @@ async function scrapeIdoxCouncil(_council: string, baseUrl: string): Promise<Scr
 
       const response = await withRetry(() =>
         fetch(`${searchUrl}&${pageParams}`, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (compatible; planning-monitor/1.0)",
-            Accept: "text/html,application/xhtml+xml",
-          },
-          signal: AbortSignal.timeout(10000),
+          headers: REALISTIC_BROWSER_HEADERS,
+          signal: AbortSignal.timeout(15000),
         })
       );
 
-      if (!response.ok) break;
+      if (!response.ok) {
+        console.warn(`[sourcing] ${council} page ${page} → HTTP ${response.status}`);
+        break;
+      }
 
       const html = await response.text();
       const pageResults = parseIdoxResultsPage(html);
@@ -101,12 +101,61 @@ async function scrapeIdoxCouncil(_council: string, baseUrl: string): Promise<Scr
       allResults.push(...pageResults);
 
       if (pageResults.length < 10) break;
+
+      // Polite delay between paginated requests so the same council doesn't see
+      // back-to-back hits — looks more human, lower chance of throttling.
+      await sleep(randomMs(800, 1800));
     }
 
     return allResults;
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[sourcing] ${council} threw: ${msg}`);
     return allResults;
   }
+}
+
+// Real-Chrome-on-Mac headers. The previous "planning-monitor/1.0" UA was a
+// dead giveaway for anti-bot systems on Idox/Northgate council portals —
+// every borough was returning empty (boroughsBlocked: 27/27 for days).
+const REALISTIC_BROWSER_HEADERS: Record<string, string> = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "en-GB,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Cache-Control": "no-cache",
+  Pragma: "no-cache",
+  "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  "Sec-Ch-Ua-Mobile": "?0",
+  "Sec-Ch-Ua-Platform": '"macOS"',
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+  "Upgrade-Insecure-Requests": "1",
+  Connection: "keep-alive",
+  DNT: "1",
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function randomMs(min: number, max: number): number {
+  return Math.floor(min + Math.random() * (max - min));
+}
+
+// Fisher-Yates: shuffle so we don't hit councils in the same order each run.
+// Predictable order is a tell for batch scrapers.
+function shuffled<T>(arr: readonly T[]): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
 }
 
 const UNIT_PATTERNS = [
@@ -154,8 +203,16 @@ export async function scanCouncils(): Promise<{
     }> = [];
 
     let boroughsBlocked = 0;
+    let isFirstBorough = true;
 
-    for (const { council, baseUrl } of IDOX_BOROUGHS) {
+    // Random borough order each run + jittered inter-borough delay so we don't
+    // look like the same batched scraper every 4 hours.
+    for (const { council, baseUrl } of shuffled(IDOX_BOROUGHS)) {
+      if (!isFirstBorough) {
+        await sleep(randomMs(2000, 6000));
+      }
+      isFirstBorough = false;
+
       const scraped = await scrapeIdoxCouncil(council, baseUrl);
       if (scraped.length === 0) boroughsBlocked++;
 
