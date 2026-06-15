@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -67,6 +68,91 @@ export async function sendPlanningAlert(applications: PlanningAlertPayload[]): P
   `;
 
   await withRetry(() => resend.emails.send({ from: FROM, to: TO, subject, html }));
+}
+
+// ---------------------------------------------------------------------------
+// Daily digest — a morning heartbeat email to IdealLand. Summarises everything
+// the system found in the last 24h, ranked by AI lead score, with the one-line
+// intelligence brief per application. Sent daily even when nothing was found,
+// so staff know the system is alive and watching. Triggered by /api/cron/digest
+// on its own crontab schedule (separate from the 4-hourly scan cron).
+// ---------------------------------------------------------------------------
+export async function sendDailyDigest(): Promise<{ sent: boolean; count: number; reason?: string }> {
+  if (!process.env.RESEND_API_KEY || process.env.RESEND_API_KEY.includes("PLACEHOLDER")) {
+    console.log("[email] RESEND_API_KEY not set — skipping daily digest");
+    return { sent: false, count: 0, reason: "RESEND_API_KEY not set" };
+  }
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const apps = await prisma.planningApplication.findMany({
+    where: { createdAt: { gte: since } },
+    orderBy: [{ createdAt: "desc" }],
+  });
+
+  // Highest-scoring leads first; unscored apps sink to the bottom.
+  const ranked = [...apps].sort((a, b) => (b.leadScore ?? 0) - (a.leadScore ?? 0));
+  const count = ranked.length;
+  const today = new Date().toLocaleDateString("en-GB", { dateStyle: "full" });
+
+  const scoreColor = (score: number | null): string => {
+    if (score === null) return "#94a3b8";
+    if (score >= 8) return "#16a34a";
+    if (score >= 5) return "#d97706";
+    return "#64748b";
+  };
+
+  const cards = ranked
+    .map((app) => {
+      const score = app.leadScore;
+      return `
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px 18px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <p style="margin:0;font-size:15px;font-weight:bold;color:#0f172a">${app.units}-unit scheme — ${app.council}</p>
+            <p style="margin:4px 0 0;font-size:13px;color:#475569">${app.address}</p>
+            <p style="margin:2px 0 0;font-family:monospace;font-size:12px;color:#94a3b8">${app.reference}</p>
+          </div>
+          <div style="text-align:center;min-width:56px">
+            <div style="font-size:22px;font-weight:bold;color:${scoreColor(score)}">${score ?? "—"}</div>
+            <div style="font-size:10px;color:#94a3b8;text-transform:uppercase">score</div>
+          </div>
+        </div>
+        ${app.intelligenceSummary ? `<p style="margin:12px 0 0;font-size:13px;line-height:1.5;color:#334155">${app.intelligenceSummary}</p>` : ""}
+      </div>`;
+    })
+    .join("");
+
+  const body = count > 0
+    ? `<p style="color:#334155;font-size:15px">
+         Overnight the system surfaced <strong>${count}</strong> new live opportunit${count > 1 ? "ies" : "y"}, ranked by lead score:
+       </p>${cards}`
+    : `<p style="color:#475569;font-size:15px">
+         No new qualifying opportunities in the last 24 hours. The system scanned all 33 London boroughs as scheduled — a quiet night, not a fault. You'll get the next find as soon as one lands.
+       </p>`;
+
+  const subject = count > 0
+    ? `☀️ IdealLand daily digest — ${count} new opportunit${count > 1 ? "ies" : "y"}`
+    : `☀️ IdealLand daily digest — quiet night`;
+
+  const html = `
+    <div style="font-family:sans-serif;max-width:700px;margin:0 auto">
+      <div style="background:#0f172a;padding:24px 32px;border-radius:8px 8px 0 0">
+        <h1 style="color:#fff;margin:0;font-size:20px">IdealLand — Morning Digest</h1>
+        <p style="color:#94a3b8;margin:8px 0 0">${today}</p>
+      </div>
+      <div style="background:#f8fafc;padding:24px 32px;border-radius:0 0 8px 8px;border:1px solid #e2e8f0;border-top:none">
+        ${body}
+        <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0">
+          <p style="color:#64748b;font-size:13px;margin:0">
+            Automated daily summary from your planning sourcing system. Live opportunities only — already-decided applications are excluded.
+          </p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  await withRetry(() => resend.emails.send({ from: FROM, to: TO, subject, html }));
+  return { sent: true, count };
 }
 
 interface DecisionAlertPayload {

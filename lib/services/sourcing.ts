@@ -90,6 +90,7 @@ interface GovUkPlanningEntity {
   description?: string;
   "start-date"?: string;
   "entry-date"?: string;
+  "decision-date"?: string;
   point?: string;
   geometry?: string;
   json?: { address?: string; site_address?: string; applicant?: string } | string;
@@ -112,7 +113,12 @@ async function fetchFromGovUk(orgEntity: number): Promise<ScrapedApplication[]> 
     const entities = data.entities ?? [];
 
     return entities
-      .filter((e) => e.reference && e.description)
+      // Skip already-decided applications. A non-empty `decision-date` means the
+      // council has already ruled (approved/refused) — it's history, not a live
+      // opportunity. The gov.uk feed back-loads lots of finished 2023-2024 cases,
+      // so without this we'd surface (and email out) dead leads like the Lewisham
+      // 542-unit scheme that was actually decided in 2023.
+      .filter((e) => e.reference && e.description && !(e["decision-date"] && e["decision-date"].trim()))
       .map((e) => {
         // The API's `json` field sometimes contains the full original payload
         // as either a parsed object or a stringified one. Pull address out of
