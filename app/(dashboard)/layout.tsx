@@ -11,12 +11,14 @@ import {
   Receipt,
   Zap,
   AlertTriangle,
+  Home,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/sourcing", label: "Sourcing", icon: Building2 },
+  { href: "/hmo", label: "HMO Acquisition", icon: Home },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/social", label: "Social Content", icon: Megaphone },
   { href: "/mailing", label: "Mailing", icon: Mail },

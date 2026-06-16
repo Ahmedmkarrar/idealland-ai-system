@@ -6,6 +6,51 @@ datasource db {
   provider = "sqlite"
 }
 
+// HMO (House in Multiple Occupation) records ingested from council public
+// licensing registers. Backs the acquisition-sourcing module: identify HMO
+// owners likely to sell (individually or as a portfolio). See
+// docs/HMO_SOURCING_SPEC.md. Note: licensing registers carry a "not for
+// marketing" notice — the list/intelligence layer is the defensible core;
+// outreach must favour companies + honour opt-outs.
+model HmoProperty {
+  id               String    @id @default(cuid())
+  // Stable dedupe key for idempotent re-ingest: "<source>:<licence|addrhash>".
+  externalKey      String    @unique
+  source           String    // e.g. "camden-opendata"
+  council          String
+  licenceNumber    String?
+  licenceType      String?
+  status           String?
+  propertyAddress  String
+  postcode         String?
+  holderName       String?
+  holderAddress    String?
+  managerName      String?
+  managerAddress   String?
+  maxPersons       Int?
+  storeys          Int?
+  bedrooms         Int?
+  rooms            Int?
+  commencementDate DateTime?
+  endDate          DateTime?
+  latitude         Float?
+  longitude        Float?
+  // Derived sell-likelihood signals (computed at ingest from register data).
+  ownerType        String?   // "company" | "individual" | "unknown"
+  portfolioSize    Int       @default(1) // # of HMOs held by the same holder
+  sellLikelihood   Int?      // 1-10
+  sellReason       String?
+  flags            String?   // csv: portfolio,near-expiry,large,company,...
+  intelligenceSummary String?
+  analyzedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([council])
+  @@index([holderName])
+  @@index([sellLikelihood])
+}
+
 model PlanningApplication {
   id          String   @id @default(cuid())
   reference   String   @unique
