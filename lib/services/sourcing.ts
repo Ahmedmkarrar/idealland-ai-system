@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/client";
 import { sendPlanningAlert } from "@/lib/services/email";
+import { sendTelegramAlert } from "@/lib/services/telegram";
 import { autoSendApplicationAlert } from "@/lib/services/mailing";
 import { withRetry } from "@/lib/retry";
 import * as cheerio from "cheerio";
@@ -414,8 +415,11 @@ export async function scanCouncils(): Promise<{
         submittedAt: a.submittedAt,
       }));
 
-      // Alert internal team via email + auto-send to developer mailing list
+      // Alert internal team via Telegram (instant push) + email, then
+      // auto-send to the developer mailing list. Each no-ops gracefully if
+      // its channel isn't configured, so any subset can run independently.
       await Promise.allSettled([
+        sendTelegramAlert(alertPayload),
         sendPlanningAlert(alertPayload),
         autoSendApplicationAlert(alertPayload),
       ]);
