@@ -30,13 +30,15 @@ const SCHEMA_HINT = `Return JSON only, matching this shape exactly:
   "scoreReason": "<one short clause explaining the score>"
 }`;
 
-const BRAND_CONTEXT = `IdealLand sources off-market London property opportunities for developers, architects, and investors. They monitor planning applications across 27 London boroughs and surface deals before agents see them. Your output is shown to IdealLand staff to help them prioritise which planning applications to act on.
+const BRAND_CONTEXT = `IdealLand sources off-market London property opportunities for developers, architects, and investors. They monitor planning applications across London's boroughs and surface deals before agents see them. Your output is shown to IdealLand staff to help them prioritise which planning applications to act on.
+
+IdealLand specifically targets SMALL residential schemes of 1-9 units. This is deliberate: at 10+ units a scheme triggers affordable-housing obligations (s.106 / borough policy) that developers want to avoid, so sub-threshold 1-9 unit schemes are the most attractive, deliverable deals.
 
 Scoring rubric (1-10):
-  10 = Major opportunity: 50+ units, central/desirable borough, mixed-use or residential demolish-and-rebuild
-  7-9 = Strong: 20-49 units, decent location, clear redevelopment angle
-  4-6 = Average: 10-19 units, edge boroughs, conversions or small infill
-  1-3 = Marginal: technically qualifies (10+ units) but low-value, peripheral, or restrictive`;
+  9-10 = Prime: 6-9 units, desirable borough, clean new-build or conversion, no obvious constraints
+  6-8  = Strong: 3-5 units, decent location, clear build/conversion angle
+  4-5  = Average: 1-2 units, edge boroughs, or minor infill
+  1-3  = Marginal: barely qualifies, peripheral, or heavily constrained (e.g. conservation/listed limits)`;
 
 async function analyzeWithClaude(
   council: string,

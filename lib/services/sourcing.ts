@@ -41,7 +41,16 @@ interface ScrapedApplication {
   description: string;
   submittedAt: Date;
   applicant?: string;
+  decidedAt?: Date;
 }
+
+// IdealLand's target band: 1-9 residential units. At 10+ units a scheme
+// triggers affordable-housing obligations (s.106 / borough policy) that
+// developers want to avoid, so the sweet spot is genuine small residential
+// development that sits BELOW that threshold. Tunable via env if policy or
+// the client's appetite changes.
+const MIN_UNITS = Number(process.env.PLANNING_MIN_UNITS ?? 1);
+const MAX_UNITS = Number(process.env.PLANNING_MAX_UNITS ?? 9);
 
 // PRIMARY data source — UK government's official planning data API.
 // Free, no auth, no Cloudflare. Covers all 33 London LPAs (data freshness
@@ -97,7 +106,7 @@ interface GovUkPlanningEntity {
   json?: { address?: string; site_address?: string; applicant?: string } | string;
 }
 
-async function fetchFromGovUk(orgEntity: number): Promise<ScrapedApplication[]> {
+async function fetchFromGovUk(orgEntity: number, opts?: { includeDecided?: boolean }): Promise<ScrapedApplication[]> {
   const url = `https://www.planning.data.gov.uk/entity.json?dataset=planning-application&organisation-entity=${orgEntity}&limit=100`;
 
   try {
@@ -114,12 +123,16 @@ async function fetchFromGovUk(orgEntity: number): Promise<ScrapedApplication[]> 
     const entities = data.entities ?? [];
 
     return entities
-      // Skip already-decided applications. A non-empty `decision-date` means the
-      // council has already ruled (approved/refused) — it's history, not a live
-      // opportunity. The gov.uk feed back-loads lots of finished 2023-2024 cases,
-      // so without this we'd surface (and email out) dead leads like the Lewisham
-      // 542-unit scheme that was actually decided in 2023.
-      .filter((e) => e.reference && e.description && !(e["decision-date"] && e["decision-date"].trim()))
+      // Live scan (default): skip already-decided applications. A non-empty
+      // `decision-date` means the council has already ruled — it's history, not
+      // a live opportunity, and the gov.uk feed back-loads lots of finished
+      // 2023-2024 cases. Historical mode (includeDecided) inverts this: we want
+      // ONLY decided applications, so James can review past decisions.
+      .filter((e) => {
+        if (!e.reference || !e.description) return false;
+        const decided = !!(e["decision-date"] && e["decision-date"].trim());
+        return opts?.includeDecided ? decided : !decided;
+      })
       .map((e) => {
         // The API's `json` field sometimes contains the full original payload
         // as either a parsed object or a stringified one. Pull address out of
@@ -137,6 +150,8 @@ async function fetchFromGovUk(orgEntity: number): Promise<ScrapedApplication[]> 
         // portal anyway. Future: reverse-geocode the point field when present.
         const address = parsedJson.site_address ?? parsedJson.address ?? (e.name && e.name.length > 0 ? e.name : `Ref ${e.reference}`);
         const submittedAt = e["start-date"] ? new Date(e["start-date"]) : (e["entry-date"] ? new Date(e["entry-date"]) : new Date());
+        const decisionRaw = e["decision-date"]?.trim();
+        const decidedAt = decisionRaw ? new Date(decisionRaw) : undefined;
 
         return {
           reference: e.reference!,
@@ -144,6 +159,7 @@ async function fetchFromGovUk(orgEntity: number): Promise<ScrapedApplication[]> 
           description: e.description!,
           submittedAt,
           applicant: parsedJson.applicant,
+          decidedAt: decidedAt && !Number.isNaN(decidedAt.getTime()) ? decidedAt : undefined,
         };
       });
   } catch {
@@ -303,20 +319,15 @@ function looksLikeTinyApplication(description: string): boolean {
   return TINY_APPLICATION_PATTERNS.some((p) => p.test(description));
 }
 
-function looksLikeLargeResidential(description: string): boolean {
+// Qualifies an application as an IdealLand target: a genuine residential scheme
+// in the 1-9 unit band (below the 10-unit affordable-housing threshold), and
+// NOT a domestic extension / single-house tinkering. We require an explicit
+// unit count in the description — schemes that don't state a number don't
+// qualify, which keeps precision high and avoids surfacing 10+ schemes.
+function looksLikeTargetResidential(description: string): boolean {
   if (looksLikeTinyApplication(description)) return false;
-
   const units = extractUnitCount(description);
-  if (units >= 10) return true;
-
-  // Fallback for descriptions that don't mention units numerically but
-  // describe substantial schemes (blocks, towers, major redevelopment).
-  const lower = description.toLowerCase();
-  const hasMajorSchemeKeyword =
-    /\b(block\s+of\s+(flats|apartments)|residential\s+block|residential\s+tower|major\s+redevelopment|comprehensive\s+redevelopment|mixed[\s-]use\s+(scheme|development)|new\s+build\s+residential)/i.test(
-      description
-    );
-  return hasMajorSchemeKeyword && (lower.includes("residential") || lower.includes("dwelling") || lower.includes("flat") || lower.includes("apartment"));
+  return units >= MIN_UNITS && units <= MAX_UNITS;
 }
 
 export async function scanCouncils(): Promise<{
@@ -374,7 +385,7 @@ export async function scanCouncils(): Promise<{
 
       if (scraped.length === 0) boroughsBlocked++;
 
-      const relevant = scraped.filter((app) => looksLikeLargeResidential(app.description));
+      const relevant = scraped.filter((app) => looksLikeTargetResidential(app.description));
 
       for (const app of relevant) {
         const existing = await prisma.planningApplication.findUnique({
@@ -432,7 +443,7 @@ export async function scanCouncils(): Promise<{
       data: {
         status: "completed",
         completedAt: new Date(),
-        summary: `Scanned ${boroughsScanned}/${LONDON_LPAS_GOVUK.length} boroughs via planning.data.gov.uk (${boroughsBlocked} empty/unavailable). Found ${newApplications.length} new 10+ unit applications.`,
+        summary: `Scanned ${boroughsScanned}/${LONDON_LPAS_GOVUK.length} boroughs via planning.data.gov.uk (${boroughsBlocked} empty/unavailable). Found ${newApplications.length} new ${MIN_UNITS}-${MAX_UNITS} unit applications.`,
       },
     });
 
@@ -442,6 +453,84 @@ export async function scanCouncils(): Promise<{
       boroughsScanned,
       boroughsBlocked,
     };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await prisma.automationRun.update({
+      where: { id: runRecord.id },
+      data: { status: "failed", completedAt: new Date(), error: message },
+    });
+    throw error;
+  }
+}
+
+// Historical backfill: pull DECIDED applications (approved/refused) from the
+// last `lookbackDays` across all London LPAs, in the same 1-9 unit band. Unlike
+// scanCouncils this is a one-shot research tool — it stores decided records for
+// James to review past decisions and does NOT fire any alerts/emails. Records
+// are marked status "decided" with their decision date; existing references are
+// skipped so it's safe to re-run.
+export async function scanHistoricalDecisions(lookbackDays = 365): Promise<{
+  found: number;
+  boroughsScanned: number;
+  lookbackDays: number;
+}> {
+  const runRecord = await prisma.automationRun.create({
+    data: { type: "decisions-backfill", status: "running" },
+  });
+
+  try {
+    const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+    let found = 0;
+    let isFirst = true;
+
+    for (const { council, orgEntity } of LONDON_LPAS_GOVUK) {
+      if (!isFirst) await sleep(randomMs(1000, 3000));
+      isFirst = false;
+
+      const scraped = await fetchFromGovUk(orgEntity, { includeDecided: true });
+      const relevant = scraped.filter(
+        (app) =>
+          app.decidedAt &&
+          app.decidedAt >= cutoff &&
+          looksLikeTargetResidential(app.description)
+      );
+
+      for (const app of relevant) {
+        const existing = await prisma.planningApplication.findUnique({
+          where: { reference: app.reference },
+        });
+        if (existing) continue;
+
+        await prisma.planningApplication.create({
+          data: {
+            reference: app.reference,
+            address: app.address,
+            description: app.description,
+            council,
+            units: extractUnitCount(app.description),
+            status: "decided",
+            applicant: app.applicant ?? null,
+            submittedAt: app.submittedAt,
+            decidedAt: app.decidedAt,
+            // Suppress all outreach — this is historical research, not a live lead.
+            alertSent: true,
+            decisionAlertSent: true,
+          },
+        });
+        found++;
+      }
+    }
+
+    await prisma.automationRun.update({
+      where: { id: runRecord.id },
+      data: {
+        status: "completed",
+        completedAt: new Date(),
+        summary: `Backfilled ${found} decided ${MIN_UNITS}-${MAX_UNITS} unit applications from the last ${lookbackDays} days across ${LONDON_LPAS_GOVUK.length} boroughs.`,
+      },
+    });
+
+    return { found, boroughsScanned: LONDON_LPAS_GOVUK.length, lookbackDays };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await prisma.automationRun.update({
