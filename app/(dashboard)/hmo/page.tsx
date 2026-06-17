@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { RefreshCw, Home, Building2, User, Landmark, ChevronDown, ChevronRight, ShieldAlert } from "lucide-react";
+import { RefreshCw, Home, Building2, User, Landmark, ChevronDown, ChevronRight, ShieldAlert, Sparkles, Mail, Copy, Check, Loader2 } from "lucide-react";
 
 interface PortfolioOwner {
   holderName: string;
@@ -33,6 +33,10 @@ interface HmoProperty {
   sellLikelihood: number | null;
   sellReason: string | null;
   flags: string | null;
+  intelligenceSummary: string | null;
+  aiScore: number | null;
+  approachLetter: string | null;
+  approachStatus: string | null;
 }
 
 function scoreBadgeClass(score: number | null): string {
@@ -56,6 +60,11 @@ export default function HmoPage() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  // Per-property expansion + in-flight AI actions for the properties tab.
+  const [openProp, setOpenProp] = useState<string | null>(null);
+  const [busy, setBusy] = useState<Record<string, "analyze" | "draft" | undefined>>({});
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,8 +92,63 @@ export default function HmoPage() {
     }
   };
 
+  // Patch a single property in local state after an AI action returns.
+  const patchProperty = (id: string, patch: Partial<HmoProperty>) =>
+    setProperties((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+
+  const analyzeOne = async (id: string) => {
+    setBusy((b) => ({ ...b, [id]: "analyze" }));
+    try {
+      const r = await fetch("/api/hmo/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ propertyId: id }),
+      }).then((res) => res.json());
+      if (r.ok && r.result) {
+        patchProperty(id, { intelligenceSummary: r.result.summary, aiScore: r.result.score });
+      }
+    } finally {
+      setBusy((b) => ({ ...b, [id]: undefined }));
+    }
+  };
+
+  const draftOne = async (id: string) => {
+    setBusy((b) => ({ ...b, [id]: "draft" }));
+    try {
+      const r = await fetch("/api/hmo/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ propertyId: id }),
+      }).then((res) => res.json());
+      if (r.ok && r.letter) patchProperty(id, { approachLetter: r.letter, approachStatus: "draft" });
+    } finally {
+      setBusy((b) => ({ ...b, [id]: undefined }));
+    }
+  };
+
+  const analyzeTopLeads = async () => {
+    setBulkBusy(true);
+    try {
+      await fetch("/api/hmo/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bulk: true, limit: 25 }),
+      });
+      await load();
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const copyLetter = async (id: string, text: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopied(id);
+    setTimeout(() => setCopied((c) => (c === id ? null : c)), 2000);
+  };
+
   const totalHmos = properties.length;
-  const hotLeads = properties.filter((p) => (p.sellLikelihood ?? 0) >= 8).length;
+  const analyzedCount = properties.filter((p) => p.aiScore != null).length;
+  const hotLeads = properties.filter((p) => (p.aiScore ?? p.sellLikelihood ?? 0) >= 8).length;
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -114,19 +178,26 @@ export default function HmoPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-4 gap-4 mb-6">
         <Card><CardContent className="pt-6"><p className="text-xs text-muted-foreground uppercase">Total HMOs</p><p className="text-2xl font-bold">{totalHmos.toLocaleString()}</p></CardContent></Card>
         <Card><CardContent className="pt-6"><p className="text-xs text-muted-foreground uppercase">Portfolio owners (2+)</p><p className="text-2xl font-bold">{owners.length.toLocaleString()}</p></CardContent></Card>
         <Card><CardContent className="pt-6"><p className="text-xs text-muted-foreground uppercase">Hot leads (score 8+)</p><p className="text-2xl font-bold text-emerald-600">{hotLeads.toLocaleString()}</p></CardContent></Card>
+        <Card><CardContent className="pt-6"><p className="text-xs text-muted-foreground uppercase">AI analysed</p><p className="text-2xl font-bold">{analyzedCount.toLocaleString()}<span className="text-sm text-muted-foreground font-normal"> / {totalHmos.toLocaleString()}</span></p></CardContent></Card>
       </div>
 
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-4 items-center">
         <Button variant={tab === "portfolios" ? "default" : "outline"} size="sm" onClick={() => setTab("portfolios")}>
           Portfolio owners
         </Button>
         <Button variant={tab === "properties" ? "default" : "outline"} size="sm" onClick={() => setTab("properties")}>
           All properties
         </Button>
+        {tab === "properties" && (
+          <Button variant="outline" size="sm" className="ml-auto" onClick={analyzeTopLeads} disabled={bulkBusy}>
+            {bulkBusy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+            {bulkBusy ? "Analysing…" : "AI-analyse top 25 leads"}
+          </Button>
+        )}
       </div>
 
       {loading ? (
@@ -183,6 +254,7 @@ export default function HmoPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8"></TableHead>
                   <TableHead className="text-center">Score</TableHead>
                   <TableHead>Property</TableHead>
                   <TableHead>Owner</TableHead>
@@ -192,16 +264,75 @@ export default function HmoPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {properties.slice(0, 300).map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell className="text-center"><Badge variant="outline" className={scoreBadgeClass(p.sellLikelihood)}>{p.sellLikelihood ?? "—"}</Badge></TableCell>
-                    <TableCell className="text-sm">{p.propertyAddress}</TableCell>
-                    <TableCell className="text-xs"><span className="inline-flex items-center gap-1">{ownerIcon(p.ownerType)}{p.holderName ?? "—"}</span></TableCell>
-                    <TableCell className="text-center">{p.portfolioSize > 1 ? <Badge variant="outline">{p.portfolioSize}</Badge> : "1"}</TableCell>
-                    <TableCell className="text-center">{p.maxPersons ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground max-w-xs">{p.sellReason ?? ""}</TableCell>
-                  </TableRow>
-                ))}
+                {properties.slice(0, 300).map((p) => {
+                  const isOpen = openProp === p.id;
+                  const displayScore = p.aiScore ?? p.sellLikelihood;
+                  const action = busy[p.id];
+                  return (
+                    <Fragment key={p.id}>
+                      <TableRow className="cursor-pointer" onClick={() => setOpenProp(isOpen ? null : p.id)}>
+                        <TableCell>{isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="outline" className={scoreBadgeClass(displayScore)}>{displayScore ?? "—"}</Badge>
+                          {p.aiScore != null && <Sparkles className="w-3 h-3 inline ml-1 text-violet-500" />}
+                        </TableCell>
+                        <TableCell className="text-sm">{p.propertyAddress}</TableCell>
+                        <TableCell className="text-xs"><span className="inline-flex items-center gap-1">{ownerIcon(p.ownerType)}{p.holderName ?? "—"}</span></TableCell>
+                        <TableCell className="text-center">{p.portfolioSize > 1 ? <Badge variant="outline">{p.portfolioSize}</Badge> : "1"}</TableCell>
+                        <TableCell className="text-center">{p.maxPersons ?? "—"}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-xs">{p.sellReason ?? ""}</TableCell>
+                      </TableRow>
+                      {isOpen && (
+                        <TableRow key={`${p.id}-detail`}>
+                          <TableCell></TableCell>
+                          <TableCell colSpan={6} className="bg-muted/30">
+                            <div className="py-2 space-y-3" onClick={(e) => e.stopPropagation()}>
+                              {/* AI acquisition brief */}
+                              {p.intelligenceSummary ? (
+                                <div>
+                                  <p className="text-xs font-semibold uppercase text-violet-600 flex items-center gap-1 mb-1"><Sparkles className="w-3 h-3" /> AI acquisition brief</p>
+                                  <p className="text-sm">{p.intelligenceSummary}</p>
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">No AI brief yet — analyse to generate a sell-likelihood read and approach angle.</p>
+                              )}
+
+                              {/* Approach letter */}
+                              {p.approachLetter && (
+                                <div>
+                                  <p className="text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1 mb-1">
+                                    <Mail className="w-3 h-3" /> Draft approach letter
+                                  </p>
+                                  <pre className="whitespace-pre-wrap text-sm bg-background border rounded-md p-3 font-sans">{p.approachLetter}</pre>
+                                </div>
+                              )}
+
+                              {/* Actions */}
+                              <div className="flex gap-2 flex-wrap">
+                                <Button size="sm" variant="outline" disabled={!!action} onClick={() => analyzeOne(p.id)}>
+                                  {action === "analyze" ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+                                  {p.intelligenceSummary ? "Re-analyse" : "AI analyse"}
+                                </Button>
+                                {p.ownerType !== "institutional" && (
+                                  <Button size="sm" variant="outline" disabled={!!action} onClick={() => draftOne(p.id)}>
+                                    {action === "draft" ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Mail className="w-3.5 h-3.5 mr-1.5" />}
+                                    {p.approachLetter ? "Re-draft letter" : "Draft approach letter"}
+                                  </Button>
+                                )}
+                                {p.approachLetter && (
+                                  <Button size="sm" variant="outline" onClick={() => copyLetter(p.id, p.approachLetter!)}>
+                                    {copied === p.id ? <Check className="w-3.5 h-3.5 mr-1.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 mr-1.5" />}
+                                    {copied === p.id ? "Copied" : "Copy letter"}
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>

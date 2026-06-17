@@ -41,8 +41,14 @@ model HmoProperty {
   sellLikelihood   Int?      // 1-10
   sellReason       String?
   flags            String?   // csv: portfolio,near-expiry,large,company,...
+  // AI acquisition layer (Phase 3): Claude-written brief, refined sell score,
+  // and a ready-to-send direct-mail approach letter. Cached on the row.
   intelligenceSummary String?
+  aiScore          Int?      // Claude's refined 1-10 sell-likelihood (vs deterministic sellLikelihood)
+  approachLetter   String?   // draft direct-mail letter to the owner
+  approachStatus   String?   // null | "draft" | "approved" | "sent"
   analyzedAt       DateTime?
+  letterDraftedAt  DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
