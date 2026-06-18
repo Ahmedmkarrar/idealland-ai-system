@@ -100,6 +100,72 @@ interface EnrichmentResult {
   directorSummary: string | null;
 }
 
+// Fetch + compute the Companies House signals for a holder name (one set of API
+// calls). Returned data is holder-level, so callers can apply it to every
+// property that shares the holder without re-querying. null = no match found.
+async function fetchCompanyData(holderName: string): Promise<EnrichmentResult | null> {
+  const company = await resolveCompany(holderName);
+  if (!company) return null;
+
+  const [profile, officersData] = await Promise.all([
+    chGet<{ company_status?: string; date_of_creation?: string }>(`/company/${company.company_number}`),
+    chGet<{ items?: Officer[] }>(`/company/${company.company_number}/officers`),
+  ]);
+
+  const activeDirectors = (officersData?.items ?? []).filter(
+    (o) => !o.resigned_on && (o.officer_role ?? "").includes("director")
+  );
+  const aged = activeDirectors
+    .map((o) => ({ name: o.name ? tidyOfficerName(o.name) : null, age: ageFromDob(o.date_of_birth) }))
+    .filter((d): d is { name: string | null; age: number } => d.age !== null)
+    .sort((a, b) => b.age - a.age);
+
+  const incRaw = profile?.date_of_creation;
+  const incorporationDate = incRaw ? new Date(incRaw) : null;
+
+  return {
+    companyNumber: company.company_number,
+    companyStatus: profile?.company_status ?? company.company_status ?? null,
+    incorporationDate: incorporationDate && !Number.isNaN(incorporationDate.getTime()) ? incorporationDate : null,
+    maxDirectorAge: aged.length ? aged[0].age : null,
+    directorSummary: aged.length ? aged.map((d) => `${d.name ?? "director"} (${d.age})`).join(", ") : null,
+  };
+}
+
+// Apply holder-level CH data to a single property row: store the fields, fold
+// the signals into flags, and nudge the deterministic sellLikelihood. Per-row
+// because flags/score build on each row's existing values.
+async function applyEnrichmentToRow(
+  row: { id: string; flags: string | null; sellLikelihood: number | null },
+  data: EnrichmentResult
+): Promise<void> {
+  const flagSet = new Set((row.flags ?? "").split(",").map((f) => f.trim()).filter(Boolean));
+  let scoreBump = 0;
+  if (data.maxDirectorAge != null && data.maxDirectorAge >= 70) { flagSet.add("director-retirement-age"); scoreBump += 2; }
+  else if (data.maxDirectorAge != null && data.maxDirectorAge >= 60) { flagSet.add("director-nearing-retirement"); scoreBump += 1; }
+  if (data.incorporationDate && new Date().getFullYear() - data.incorporationDate.getFullYear() >= 20) {
+    flagSet.add("long-established"); scoreBump += 1;
+  }
+  if (data.companyStatus && data.companyStatus !== "active") { flagSet.add(`company-${data.companyStatus}`); scoreBump += 1; }
+
+  const newScore =
+    scoreBump > 0 && row.sellLikelihood != null ? Math.min(10, row.sellLikelihood + scoreBump) : row.sellLikelihood ?? undefined;
+
+  await prisma.hmoProperty.update({
+    where: { id: row.id },
+    data: {
+      companyNumber: data.companyNumber,
+      companyStatus: data.companyStatus,
+      incorporationDate: data.incorporationDate,
+      maxDirectorAge: data.maxDirectorAge,
+      directorSummary: data.directorSummary,
+      flags: [...flagSet].join(","),
+      ...(newScore !== undefined && { sellLikelihood: newScore }),
+      enrichedAt: new Date(),
+    },
+  });
+}
+
 // "SURNAME, Forename" -> "Forename Surname" for a friendlier display string.
 function tidyOfficerName(name: string): string {
   const parts = name.split(",");
@@ -130,94 +196,69 @@ export async function enrichHmoProperty(
     return { ok: false, reason: "COMPANIES_HOUSE_API_KEY not configured" };
   }
 
-  const company = await resolveCompany(p.holderName);
-  if (!company) {
+  const data = await fetchCompanyData(p.holderName);
+  if (!data) {
     // Record the attempt so we don't keep re-querying a holder with no match.
     await prisma.hmoProperty.update({ where: { id: propertyId }, data: { enrichedAt: new Date() } });
     return { ok: false, reason: "No matching company found on Companies House" };
   }
 
-  const [profile, officersData] = await Promise.all([
-    chGet<{ company_status?: string; date_of_creation?: string }>(`/company/${company.company_number}`),
-    chGet<{ items?: Officer[] }>(`/company/${company.company_number}/officers`),
-  ]);
-
-  const activeDirectors = (officersData?.items ?? []).filter(
-    (o) => !o.resigned_on && (o.officer_role ?? "").includes("director")
-  );
-
-  const aged = activeDirectors
-    .map((o) => ({ name: o.name ? tidyOfficerName(o.name) : null, age: ageFromDob(o.date_of_birth) }))
-    .filter((d): d is { name: string | null; age: number } => d.age !== null)
-    .sort((a, b) => b.age - a.age);
-
-  const maxDirectorAge = aged.length ? aged[0].age : null;
-  const directorSummary = aged.length
-    ? aged.map((d) => `${d.name ?? "director"} (${d.age})`).join(", ")
-    : null;
-
-  const incRaw = profile?.date_of_creation;
-  const incorporationDate = incRaw ? new Date(incRaw) : null;
-  const companyStatus = profile?.company_status ?? company.company_status ?? null;
-
-  // Fold the new signals into the deterministic flags + score so they surface
-  // even before an AI pass. Retirement-age director and long-established
-  // company both push sell-likelihood up.
-  const flagSet = new Set((p.flags ?? "").split(",").map((f) => f.trim()).filter(Boolean));
-  let scoreBump = 0;
-  if (maxDirectorAge != null && maxDirectorAge >= 70) { flagSet.add("director-retirement-age"); scoreBump += 2; }
-  else if (maxDirectorAge != null && maxDirectorAge >= 60) { flagSet.add("director-nearing-retirement"); scoreBump += 1; }
-  if (incorporationDate && new Date().getFullYear() - incorporationDate.getFullYear() >= 20) {
-    flagSet.add("long-established"); scoreBump += 1;
-  }
-  if (companyStatus && companyStatus !== "active") { flagSet.add(`company-${companyStatus}`); scoreBump += 1; }
-
-  const newScore =
-    scoreBump > 0 && p.sellLikelihood != null
-      ? Math.min(10, p.sellLikelihood + scoreBump)
-      : p.sellLikelihood ?? undefined;
-
-  await prisma.hmoProperty.update({
-    where: { id: propertyId },
-    data: {
-      companyNumber: company.company_number,
-      companyStatus,
-      incorporationDate: incorporationDate && !Number.isNaN(incorporationDate.getTime()) ? incorporationDate : null,
-      maxDirectorAge,
-      directorSummary,
-      flags: [...flagSet].join(","),
-      ...(newScore !== undefined && { sellLikelihood: newScore }),
-      enrichedAt: new Date(),
-    },
-  });
-
-  return {
-    ok: true,
-    result: { companyNumber: company.company_number, companyStatus, incorporationDate, maxDirectorAge, directorSummary },
-  };
+  await applyEnrichmentToRow(p, data);
+  return { ok: true, result: data };
 }
 
-// Bulk-enrich company-owned HMOs that haven't been enriched yet, biggest
-// portfolios first. Caps the batch to stay well within the rate limit and to
-// bound a single run; re-run to continue through the backlog.
-export async function bulkEnrichHmo(limit = 40): Promise<{ enriched: number; skipped: number; reason?: string }> {
+// Bulk-enrich the top `limit` DISTINCT company owners that haven't been
+// enriched yet, biggest portfolios first. Each company is looked up on
+// Companies House once, then the result is applied to all of that owner's
+// properties — so the limit is in distinct owners, not rows, and we don't burn
+// the API re-querying the same landlord. Re-run to continue the backlog.
+export async function bulkEnrichHmo(limit = 40): Promise<{
+  enriched: number; ownersProcessed: number; unmatched: number; reason?: string;
+}> {
   if (!isCompaniesHouseConfigured()) {
-    return { enriched: 0, skipped: 0, reason: "COMPANIES_HOUSE_API_KEY not configured" };
+    return { enriched: 0, ownersProcessed: 0, unmatched: 0, reason: "COMPANIES_HOUSE_API_KEY not configured" };
   }
 
   const pending = await prisma.hmoProperty.findMany({
     where: { ownerType: "company", enrichedAt: null, holderName: { not: null } },
+    select: { id: true, holderName: true, flags: true, sellLikelihood: true },
     orderBy: [{ portfolioSize: "desc" }, { sellLikelihood: "desc" }],
-    take: limit,
   });
 
-  let enriched = 0;
-  let skipped = 0;
-  for (const p of pending) {
-    const r = await enrichHmoProperty(p.id);
-    if (r.ok) enriched++;
-    else skipped++;
+  // Group remaining rows by exact holder name, ordered by first appearance
+  // (which is already biggest-portfolio-first from the query above).
+  const byHolder = new Map<string, typeof pending>();
+  for (const row of pending) {
+    const key = row.holderName!;
+    const arr = byHolder.get(key) ?? [];
+    arr.push(row);
+    byHolder.set(key, arr);
   }
 
-  return { enriched, skipped };
+  let enriched = 0;
+  let ownersProcessed = 0;
+  let unmatched = 0;
+
+  for (const [holderName, rows] of byHolder) {
+    if (ownersProcessed >= limit) break;
+    ownersProcessed++;
+
+    const data = await fetchCompanyData(holderName);
+    if (!data) {
+      // Mark every row of this holder as attempted so we don't retry it.
+      await prisma.hmoProperty.updateMany({
+        where: { id: { in: rows.map((r) => r.id) } },
+        data: { enrichedAt: new Date() },
+      });
+      unmatched++;
+      continue;
+    }
+
+    for (const row of rows) {
+      await applyEnrichmentToRow(row, data);
+      enriched++;
+    }
+  }
+
+  return { enriched, ownersProcessed, unmatched };
 }
