@@ -49,6 +49,13 @@ model HmoProperty {
   approachStatus   String?   // null | "draft" | "approved" | "sent"
   analyzedAt       DateTime?
   letterDraftedAt  DateTime?
+  // Companies House enrichment (Phase 2) — only for company-owned HMOs.
+  companyNumber      String?   // resolved CH company number
+  companyStatus      String?   // "active" | "dissolved" | "liquidation" | ...
+  incorporationDate  DateTime? // proxy for how long they've held/operated
+  maxDirectorAge     Int?      // oldest active director's age — retirement signal
+  directorSummary    String?   // e.g. "Malcolm Haines (78), William Haines (39)"
+  enrichedAt         DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 

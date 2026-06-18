@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { RefreshCw, Home, Building2, User, Landmark, ChevronDown, ChevronRight, ShieldAlert, Sparkles, Mail, Copy, Check, Loader2 } from "lucide-react";
+import { RefreshCw, Home, Building2, User, Landmark, ChevronDown, ChevronRight, ShieldAlert, Sparkles, Mail, Copy, Check, Loader2, Briefcase, Clock } from "lucide-react";
 
 interface PortfolioOwner {
   holderName: string;
@@ -37,6 +37,11 @@ interface HmoProperty {
   aiScore: number | null;
   approachLetter: string | null;
   approachStatus: string | null;
+  companyStatus: string | null;
+  incorporationDate: string | null;
+  maxDirectorAge: number | null;
+  directorSummary: string | null;
+  enrichedAt: string | null;
 }
 
 function scoreBadgeClass(score: number | null): string {
@@ -62,8 +67,9 @@ export default function HmoPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   // Per-property expansion + in-flight AI actions for the properties tab.
   const [openProp, setOpenProp] = useState<string | null>(null);
-  const [busy, setBusy] = useState<Record<string, "analyze" | "draft" | undefined>>({});
+  const [busy, setBusy] = useState<Record<string, "analyze" | "draft" | "enrich" | undefined>>({});
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkEnrichBusy, setBulkEnrichBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -123,6 +129,42 @@ export default function HmoPage() {
       if (r.ok && r.letter) patchProperty(id, { approachLetter: r.letter, approachStatus: "draft" });
     } finally {
       setBusy((b) => ({ ...b, [id]: undefined }));
+    }
+  };
+
+  const enrichOne = async (id: string) => {
+    setBusy((b) => ({ ...b, [id]: "enrich" }));
+    try {
+      const r = await fetch("/api/hmo/enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ propertyId: id }),
+      }).then((res) => res.json());
+      if (r.ok && r.result) {
+        patchProperty(id, {
+          companyStatus: r.result.companyStatus,
+          incorporationDate: r.result.incorporationDate,
+          maxDirectorAge: r.result.maxDirectorAge,
+          directorSummary: r.result.directorSummary,
+          enrichedAt: new Date().toISOString(),
+        });
+      }
+    } finally {
+      setBusy((b) => ({ ...b, [id]: undefined }));
+    }
+  };
+
+  const enrichTopOwners = async () => {
+    setBulkEnrichBusy(true);
+    try {
+      await fetch("/api/hmo/enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bulk: true, limit: 40 }),
+      });
+      await load();
+    } finally {
+      setBulkEnrichBusy(false);
     }
   };
 
@@ -193,10 +235,16 @@ export default function HmoPage() {
           All properties
         </Button>
         {tab === "properties" && (
-          <Button variant="outline" size="sm" className="ml-auto" onClick={analyzeTopLeads} disabled={bulkBusy}>
-            {bulkBusy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-            {bulkBusy ? "Analysing…" : "AI-analyse top 25 leads"}
-          </Button>
+          <div className="ml-auto flex gap-2">
+            <Button variant="outline" size="sm" onClick={enrichTopOwners} disabled={bulkEnrichBusy}>
+              {bulkEnrichBusy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Briefcase className="w-4 h-4 mr-2" />}
+              {bulkEnrichBusy ? "Enriching…" : "Enrich top 40 (Companies House)"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={analyzeTopLeads} disabled={bulkBusy}>
+              {bulkBusy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+              {bulkBusy ? "Analysing…" : "AI-analyse top 25 leads"}
+            </Button>
+          </div>
         )}
       </div>
 
@@ -287,6 +335,28 @@ export default function HmoPage() {
                           <TableCell></TableCell>
                           <TableCell colSpan={6} className="bg-muted/30">
                             <div className="py-2 space-y-3" onClick={(e) => e.stopPropagation()}>
+                              {/* Companies House owner intel */}
+                              {p.enrichedAt && (p.directorSummary || p.companyStatus || p.incorporationDate) && (
+                                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                                  {p.maxDirectorAge != null && (
+                                    <span className={`inline-flex items-center gap-1 ${p.maxDirectorAge >= 60 ? "text-emerald-700 font-medium" : "text-muted-foreground"}`}>
+                                      <Clock className="w-3 h-3" /> Oldest director: {p.maxDirectorAge}{p.maxDirectorAge >= 60 ? " — retirement signal" : ""}
+                                    </span>
+                                  )}
+                                  {p.incorporationDate && (
+                                    <span className="inline-flex items-center gap-1 text-muted-foreground">
+                                      <Briefcase className="w-3 h-3" /> Est. {new Date(p.incorporationDate).getFullYear()}
+                                    </span>
+                                  )}
+                                  {p.companyStatus && (
+                                    <span className={`inline-flex items-center gap-1 ${p.companyStatus !== "active" ? "text-amber-700 font-medium" : "text-muted-foreground"}`}>
+                                      <Building2 className="w-3 h-3" /> {p.companyStatus}
+                                    </span>
+                                  )}
+                                  {p.directorSummary && <span className="text-muted-foreground">Directors: {p.directorSummary}</span>}
+                                </div>
+                              )}
+
                               {/* AI acquisition brief */}
                               {p.intelligenceSummary ? (
                                 <div>
@@ -309,6 +379,12 @@ export default function HmoPage() {
 
                               {/* Actions */}
                               <div className="flex gap-2 flex-wrap">
+                                {p.ownerType === "company" && (
+                                  <Button size="sm" variant="outline" disabled={!!action} onClick={() => enrichOne(p.id)}>
+                                    {action === "enrich" ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Briefcase className="w-3.5 h-3.5 mr-1.5" />}
+                                    {p.enrichedAt ? "Re-check owner" : "Enrich owner"}
+                                  </Button>
+                                )}
                                 <Button size="sm" variant="outline" disabled={!!action} onClick={() => analyzeOne(p.id)}>
                                   {action === "analyze" ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
                                   {p.intelligenceSummary ? "Re-analyse" : "AI analyse"}

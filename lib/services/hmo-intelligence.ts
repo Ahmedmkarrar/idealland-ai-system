@@ -48,6 +48,11 @@ interface PropertyForAi {
   sellLikelihood: number | null;
   sellReason: string | null;
   flags: string | null;
+  // Companies House enrichment (may be null if not yet enriched / not a company).
+  companyStatus: string | null;
+  incorporationDate: Date | null;
+  maxDirectorAge: number | null;
+  directorSummary: string | null;
 }
 
 // Compact, fact-only description of the property+owner for the prompt. We never
@@ -65,6 +70,11 @@ function describe(p: PropertyForAi): string {
     p.status ? `Licence status: ${p.status}` : null,
     p.endDate ? `Licence expiry: ${p.endDate.toLocaleDateString("en-GB")}` : null,
     p.sellReason ? `Register-only signals: ${p.sellReason}` : null,
+    // Companies House enrichment — strong sell signals when present.
+    p.directorSummary ? `Directors (Companies House): ${p.directorSummary}` : null,
+    p.maxDirectorAge != null ? `Oldest active director age: ${p.maxDirectorAge}${p.maxDirectorAge >= 60 ? " (retirement/exit signal)" : ""}` : null,
+    p.incorporationDate ? `Company incorporated: ${p.incorporationDate.getFullYear()} (${new Date().getFullYear() - p.incorporationDate.getFullYear()} yrs established)` : null,
+    p.companyStatus && p.companyStatus !== "active" ? `Company status: ${p.companyStatus}` : null,
   ];
   return lines.filter(Boolean).join("\n");
 }
