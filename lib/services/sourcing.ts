@@ -3,46 +3,6 @@ import { sendPlanningAlert } from "@/lib/services/email";
 import { sendTelegramAlert } from "@/lib/services/telegram";
 import { autoSendApplicationAlert } from "@/lib/services/mailing";
 import { withRetry } from "@/lib/retry";
-import * as cheerio from "cheerio";
-
-const IDOX_BOROUGHS: Array<{ council: string; baseUrl: string }> = [
-  { council: "Camden", baseUrl: "https://planningrecords.camden.gov.uk/Northgate/PlanningExplorer" },
-  { council: "Hackney", baseUrl: "https://publicaccess.hackney.gov.uk/online-applications" },
-  { council: "Islington", baseUrl: "https://publicaccess.islington.gov.uk/online-applications" },
-  { council: "Tower Hamlets", baseUrl: "https://development.towerhamlets.gov.uk/online-applications" },
-  { council: "Newham", baseUrl: "https://pa.newham.gov.uk/online-applications" },
-  { council: "Southwark", baseUrl: "https://planning.southwark.gov.uk/online-applications" },
-  { council: "Lambeth", baseUrl: "https://planning.lambeth.gov.uk/online-applications" },
-  { council: "Lewisham", baseUrl: "https://planning.lewisham.gov.uk/online-applications" },
-  { council: "Greenwich", baseUrl: "https://www2.greenwich.gov.uk/online-applications" },
-  { council: "Wandsworth", baseUrl: "https://planning.wandsworth.gov.uk/Northgate/PlanningExplorer" },
-  { council: "Westminster", baseUrl: "https://idoxpa.westminster.gov.uk/online-applications" },
-  { council: "Hammersmith and Fulham", baseUrl: "https://public-access.lbhf.gov.uk/online-applications" },
-  { council: "Kensington and Chelsea", baseUrl: "https://publicaccess.rbkc.gov.uk/online-applications" },
-  { council: "Haringey", baseUrl: "https://www.planningservices.haringey.gov.uk/online-applications" },
-  { council: "Barnet", baseUrl: "https://publicaccess.barnet.gov.uk/online-applications" },
-  { council: "Enfield", baseUrl: "https://planningandbuildingcontrol.enfield.gov.uk/online-applications" },
-  { council: "Waltham Forest", baseUrl: "https://planning.walthamforest.gov.uk/online-applications" },
-  { council: "Redbridge", baseUrl: "https://publicaccess.redbridge.gov.uk/online-applications" },
-  { council: "Havering", baseUrl: "https://development.havering.gov.uk/online-applications" },
-  { council: "Bexley", baseUrl: "https://pa.bexley.gov.uk/online-applications" },
-  { council: "Bromley", baseUrl: "https://searchapplications.bromley.gov.uk/online-applications" },
-  { council: "Croydon", baseUrl: "https://publicaccess3.croydon.gov.uk/online-applications" },
-  { council: "Sutton", baseUrl: "https://planningregister.sutton.gov.uk/online-applications" },
-  { council: "Merton", baseUrl: "https://planning.merton.gov.uk/Northgate/PlanningExplorer" },
-  { council: "Kingston", baseUrl: "https://publicaccess.kingston.gov.uk/online-applications" },
-  { council: "Richmond", baseUrl: "https://www2.richmond.gov.uk/lbrplanning/online-applications" },
-  { council: "Hounslow", baseUrl: "https://planning.hounslow.gov.uk/online-applications" },
-];
-
-interface ScrapedApplication {
-  reference: string;
-  address: string;
-  description: string;
-  submittedAt: Date;
-  applicant?: string;
-  decidedAt?: Date;
-}
 
 // IdealLand's target band: 1-9 residential units. At 10+ units a scheme
 // triggers affordable-housing obligations (s.106 / borough policy) that
@@ -52,267 +12,221 @@ interface ScrapedApplication {
 const MIN_UNITS = Number(process.env.PLANNING_MIN_UNITS ?? 1);
 const MAX_UNITS = Number(process.env.PLANNING_MAX_UNITS ?? 9);
 
-// PRIMARY data source — UK government's official planning data API.
-// Free, no auth, no Cloudflare. Covers all 33 London LPAs (data freshness
-// varies — some boroughs back-load data, others stream live). Used as the
-// first attempt for each council; Idox scrape kept as a fallback if/when
-// we add a scraping proxy that can defeat Cloudflare.
+// How far back (by last-updated) a live scan looks. Dedup on `reference` means
+// re-scanning the same window every cron run is safe — only genuinely new
+// references are inserted, so this doubles as a rolling backfill window.
+const LIVE_WINDOW_DAYS = Number(process.env.PLANNING_SCAN_WINDOW_DAYS ?? 7);
+
+// Hard cap on how many freshly-found apps fire outbound alerts in a single run,
+// so a wide window (e.g. the first populate) can't blast Telegram / the mailing
+// list. Every new row is still marked alertSent so it never re-alerts later.
+const MAX_ALERTS_PER_RUN = Number(process.env.PLANNING_MAX_ALERTS ?? 20);
+
+// External auto-outreach to the developer mailing list is OFF by default — it
+// emails real contacts. Set PLANNING_AUTO_OUTREACH=true to enable once the
+// contact list and copy have been reviewed. Internal Telegram/email alerts are
+// always on (they only reach the IdealLand team).
+const AUTO_OUTREACH_ENABLED = process.env.PLANNING_AUTO_OUTREACH === "true";
+
+// ---------------------------------------------------------------------------
+// DATA SOURCE — Planning London DataHub (GLA), PRIMARY + ONLY.
 //
-// IDs sourced from: GET /entity.json?dataset=local-planning-authority&limit=500
-const LONDON_LPAS_GOVUK: Array<{ council: string; orgEntity: number }> = [
-  { council: "Camden",                  orgEntity: 626188 },
-  { council: "City of London",          orgEntity: 626189 },
-  { council: "Hackney",                 orgEntity: 626190 },
-  { council: "Hammersmith and Fulham",  orgEntity: 626191 },
-  { council: "Haringey",                orgEntity: 626192 },
-  { council: "Islington",               orgEntity: 626193 },
-  { council: "Kensington and Chelsea",  orgEntity: 626194 },
-  { council: "Lambeth",                 orgEntity: 626195 },
-  { council: "Lewisham",                orgEntity: 626196 },
-  { council: "Newham",                  orgEntity: 626197 },
-  { council: "Southwark",               orgEntity: 626198 },
-  { council: "Tower Hamlets",           orgEntity: 626199 },
-  { council: "Wandsworth",              orgEntity: 626200 },
-  { council: "Westminster",             orgEntity: 626201 },
-  { council: "Barnet",                  orgEntity: 626203 },
-  { council: "Bexley",                  orgEntity: 626204 },
-  { council: "Brent",                   orgEntity: 626205 },
-  { council: "Bromley",                 orgEntity: 626206 },
-  { council: "Croydon",                 orgEntity: 626207 },
-  { council: "Ealing",                  orgEntity: 626208 },
-  { council: "Enfield",                 orgEntity: 626209 },
-  { council: "Greenwich",               orgEntity: 626210 },
-  { council: "Harrow",                  orgEntity: 626211 },
-  { council: "Havering",                orgEntity: 626212 },
-  { council: "Hillingdon",              orgEntity: 626213 },
-  { council: "Hounslow",                orgEntity: 626214 },
-  { council: "Kingston upon Thames",    orgEntity: 626215 },
-  { council: "Merton",                  orgEntity: 626216 },
-  { council: "Redbridge",               orgEntity: 626217 },
-  { council: "Richmond upon Thames",    orgEntity: 626218 },
-  { council: "Sutton",                  orgEntity: 626219 },
-  { council: "Waltham Forest",          orgEntity: 626220 },
-];
+// Free guest ElasticSearch API; a real-time feed of planning applications for
+// ALL 33 London planning authorities, updated daily by back-office connectors.
+//
+// This replaces two dead sources:
+//   1. planning.data.gov.uk — its `planning-application` dataset silently
+//      narrowed to a single non-London authority (Doncaster, org-entity 109)
+//      with stale mid-2025 data, so every London org-entity filter was ignored
+//      and returned all-decided history → 0 live leads for weeks.
+//   2. Direct Idox/Northgate council scrapes — Cloudflare-blocks the droplet IP.
+//
+// Docs: https://www.london.gov.uk/programmes-strategies/planning/digital-planning/planning-london-datahub
+// ---------------------------------------------------------------------------
+const PLD_SEARCH_URL =
+  "https://planningdata.london.gov.uk/api-guest/applications/_search";
+const PLD_PAGE_SIZE = 250;
+const PLD_MAX_RECORDS = Number(process.env.PLANNING_MAX_RECORDS ?? 2000);
+const PLD_PROPOSED_UNITS_FIELD =
+  "application_details.residential_details.total_no_proposed_residential_units";
 
-interface GovUkPlanningEntity {
-  reference?: string;
-  name?: string;
+interface ScrapedApplication {
+  reference: string; // globally-unique PLD document id, e.g. "Camden-2026_2199_P"
+  council: string;
+  address: string;
+  description: string;
+  units: number; // structured proposed residential unit count from PLD
+  submittedAt: Date;
+  applicant?: string;
+  decidedAt?: Date;
+}
+
+interface PldSource {
+  id?: string;
+  lpa_app_no?: string;
+  borough?: string;
+  lpa_name?: string;
   description?: string;
-  "start-date"?: string;
-  "entry-date"?: string;
-  "decision-date"?: string;
-  point?: string;
-  geometry?: string;
-  json?: { address?: string; site_address?: string; applicant?: string } | string;
+  decision?: string | null;
+  decision_date?: string | null;
+  status?: string | null;
+  valid_date?: string | null;
+  last_updated?: string | null;
+  site_number?: string | number | null;
+  street_name?: string | null;
+  secondary_street_name?: string | null;
+  postcode?: string | null;
+  application_details?: {
+    lead_developer_company_name?: string | null;
+    residential_details?: {
+      total_no_proposed_residential_units?: number | null;
+      total_no_existing_residential_units?: number | null;
+    } | null;
+  } | null;
 }
 
-async function fetchFromGovUk(orgEntity: number, opts?: { includeDecided?: boolean }): Promise<ScrapedApplication[]> {
-  const url = `https://www.planning.data.gov.uk/entity.json?dataset=planning-application&organisation-entity=${orgEntity}&limit=100`;
-
-  try {
-    const response = await withRetry(() =>
-      fetch(url, {
-        headers: { Accept: "application/json", "User-Agent": "idealland-automation/1.0 (london property intelligence)" },
-        signal: AbortSignal.timeout(20000),
-      })
-    );
-
-    if (!response.ok) return [];
-
-    const data = (await response.json()) as { entities?: GovUkPlanningEntity[] };
-    const entities = data.entities ?? [];
-
-    return entities
-      // Live scan (default): skip already-decided applications. A non-empty
-      // `decision-date` means the council has already ruled — it's history, not
-      // a live opportunity, and the gov.uk feed back-loads lots of finished
-      // 2023-2024 cases. Historical mode (includeDecided) inverts this: we want
-      // ONLY decided applications, so James can review past decisions.
-      .filter((e) => {
-        if (!e.reference || !e.description) return false;
-        const decided = !!(e["decision-date"] && e["decision-date"].trim());
-        return opts?.includeDecided ? decided : !decided;
-      })
-      .map((e) => {
-        // The API's `json` field sometimes contains the full original payload
-        // as either a parsed object or a stringified one. Pull address out of
-        // either shape, fall back to name, fall back to "[address unknown]".
-        let parsedJson: { address?: string; site_address?: string; applicant?: string } = {};
-        if (typeof e.json === "string") {
-          try { parsedJson = JSON.parse(e.json); } catch { /* leave empty */ }
-        } else if (e.json && typeof e.json === "object") {
-          parsedJson = e.json;
-        }
-
-        // gov.uk API doesn't expose addresses (geometry/point fields are
-        // typically empty too). Fall back to the reference, which is what
-        // IdealLand staff will use to look the application up in the council
-        // portal anyway. Future: reverse-geocode the point field when present.
-        const address = parsedJson.site_address ?? parsedJson.address ?? (e.name && e.name.length > 0 ? e.name : `Ref ${e.reference}`);
-        const submittedAt = e["start-date"] ? new Date(e["start-date"]) : (e["entry-date"] ? new Date(e["entry-date"]) : new Date());
-        const decisionRaw = e["decision-date"]?.trim();
-        const decidedAt = decisionRaw ? new Date(decisionRaw) : undefined;
-
-        return {
-          reference: e.reference!,
-          address,
-          description: e.description!,
-          submittedAt,
-          applicant: parsedJson.applicant,
-          decidedAt: decidedAt && !Number.isNaN(decidedAt.getTime()) ? decidedAt : undefined,
-        };
-      });
-  } catch {
-    return [];
+// PLD dates come as dd/mm/yyyy (valid_date, decision_date) or ISO
+// (last_updated). Returns undefined on anything unparseable so the caller can
+// fall back to another field.
+function parseUkDate(value?: string | null): Date | undefined {
+  if (!value) return undefined;
+  const uk = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (uk) {
+    const d = new Date(Number(uk[3]), Number(uk[2]) - 1, Number(uk[1]));
+    return Number.isNaN(d.getTime()) ? undefined : d;
   }
+  const iso = new Date(value);
+  return Number.isNaN(iso.getTime()) ? undefined : iso;
 }
 
-function parseIdoxResultsPage(html: string): ScrapedApplication[] {
-  const $ = cheerio.load(html);
-  const results: ScrapedApplication[] = [];
-
-  $("li.searchresult").each((_, el) => {
-    const reference = $(el).find("a.searchresultLink").text().trim();
-    const address = $(el).find("p.address").text().trim();
-    const description = $(el).find("p.description").text().trim();
-    const receivedText = $(el).find("p.received").text().trim();
-
-    if (!reference || !address) return;
-
-    const dateMatch = receivedText.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
-    const submittedAt = dateMatch
-      ? new Date(dateMatch[1].split("/").reverse().join("-"))
-      : new Date();
-
-    results.push({ reference, address, description, submittedAt });
-  });
-
-  return results;
+// Council name from the PLD document id prefix ("Tower_Hamlets-PA_21..." →
+// "Tower Hamlets"). The `borough` field is inconsistent across boroughs (e.g.
+// "Enfield" vs "Enfield Council", "LB Bromley" vs "Bromley Custodian Code"), so
+// the id prefix is the reliable identifier; borough is a last resort.
+function councilFromId(id?: string, borough?: string): string {
+  if (id && id.includes("-")) {
+    const prefix = id.slice(0, id.indexOf("-")).replace(/_/g, " ").trim();
+    if (prefix) return prefix;
+  }
+  return (borough ?? "London").trim();
 }
 
-async function scrapeIdoxCouncil(council: string, baseUrl: string): Promise<ScrapedApplication[]> {
-  const searchUrl = `${baseUrl}/search.do?action=simple&searchType=Application`;
-  const fourWeeksAgo = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
-  const dateFrom = fourWeeksAgo.toLocaleDateString("en-GB");
+function buildAddress(s: PldSource): string {
+  const parts = [s.site_number, s.street_name, s.secondary_street_name, s.postcode]
+    .map((p) => (p === null || p === undefined ? "" : String(p).trim()))
+    .filter((p) => p.length > 0);
+  if (parts.length > 0) return parts.join(", ");
+  return `${councilFromId(s.id, s.borough)} (ref ${s.lpa_app_no ?? s.id ?? "unknown"})`;
+}
 
-  const baseParams = new URLSearchParams({
-    "searchCriteria.description": "residential",
-    "searchCriteria.receivedFrom": dateFrom,
-    caseType: "Application",
-  });
+// Query PLD for residential schemes in the 1-9 unit band across all of London,
+// paginating by last-updated. `includeDecided:false` (default) returns live
+// opportunities (no decision yet); `true` returns decided applications for the
+// historical research backfill.
+async function fetchFromPLD(opts?: {
+  includeDecided?: boolean;
+  windowDays?: number;
+}): Promise<ScrapedApplication[]> {
+  const windowDays = opts?.windowDays ?? LIVE_WINDOW_DAYS;
+  const includeDecided = opts?.includeDecided ?? false;
 
-  const allResults: ScrapedApplication[] = [];
+  // A decided application has a non-null `decision` (Approved/Refused/etc.).
+  // decision_date is unreliable (often null even when decided), so we key off
+  // the `decision` field's existence.
+  const decisionClause = includeDecided
+    ? { must: [{ exists: { field: "decision" } }] }
+    : { must_not: [{ exists: { field: "decision" } }] };
 
-  try {
-    for (let page = 1; page <= 3; page++) {
-      const pageParams = new URLSearchParams(baseParams);
-      if (page > 1) pageParams.set("searchCriteria.page", String(page));
+  const filter = [
+    { range: { [PLD_PROPOSED_UNITS_FIELD]: { gte: MIN_UNITS, lte: MAX_UNITS } } },
+    { range: { last_updated: { gte: `now-${windowDays}d/d` } } },
+  ];
 
-      const response = await withRetry(() =>
-        fetch(`${searchUrl}&${pageParams}`, {
-          headers: REALISTIC_BROWSER_HEADERS,
-          signal: AbortSignal.timeout(15000),
+  const sourceFields = [
+    "id", "lpa_app_no", "borough", "lpa_name", "description",
+    "decision", "decision_date", "status", "valid_date", "last_updated",
+    "site_number", "street_name", "secondary_street_name", "postcode",
+    "application_details.lead_developer_company_name",
+    PLD_PROPOSED_UNITS_FIELD,
+    "application_details.residential_details.total_no_existing_residential_units",
+  ];
+
+  const out: ScrapedApplication[] = [];
+  const seen = new Set<string>();
+
+  for (let from = 0; from < PLD_MAX_RECORDS; from += PLD_PAGE_SIZE) {
+    const body = JSON.stringify({
+      size: PLD_PAGE_SIZE,
+      from,
+      sort: [{ last_updated: { order: "desc" } }],
+      _source: sourceFields,
+      query: { bool: { filter, ...decisionClause } },
+    });
+
+    let hits: Array<{ _source?: PldSource }> = [];
+    try {
+      const res = await withRetry(() =>
+        fetch(PLD_SEARCH_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body,
+          signal: AbortSignal.timeout(25000),
         })
       );
-
-      if (!response.ok) {
-        console.warn(`[sourcing] ${council} page ${page} → HTTP ${response.status}`);
-        break;
-      }
-
-      const html = await response.text();
-      const pageResults = parseIdoxResultsPage(html);
-
-      allResults.push(...pageResults);
-
-      if (pageResults.length < 10) break;
-
-      // Polite delay between paginated requests so the same council doesn't see
-      // back-to-back hits — looks more human, lower chance of throttling.
-      await sleep(randomMs(800, 1800));
+      if (!res.ok) break;
+      const data = (await res.json()) as {
+        hits?: { hits?: Array<{ _source?: PldSource }> };
+      };
+      hits = data.hits?.hits ?? [];
+    } catch {
+      break;
     }
 
-    return allResults;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[sourcing] ${council} threw: ${msg}`);
-    return allResults;
-  }
-}
+    if (hits.length === 0) break;
 
-// Real-Chrome-on-Mac headers. The previous "planning-monitor/1.0" UA was a
-// dead giveaway for anti-bot systems on Idox/Northgate council portals —
-// every borough was returning empty (boroughsBlocked: 27/27 for days).
-const REALISTIC_BROWSER_HEADERS: Record<string, string> = {
-  "User-Agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  Accept:
-    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-  "Accept-Language": "en-GB,en;q=0.9",
-  "Accept-Encoding": "gzip, deflate, br",
-  "Cache-Control": "no-cache",
-  Pragma: "no-cache",
-  "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-  "Sec-Ch-Ua-Mobile": "?0",
-  "Sec-Ch-Ua-Platform": '"macOS"',
-  "Sec-Fetch-Dest": "document",
-  "Sec-Fetch-Mode": "navigate",
-  "Sec-Fetch-Site": "none",
-  "Sec-Fetch-User": "?1",
-  "Upgrade-Insecure-Requests": "1",
-  Connection: "keep-alive",
-  DNT: "1",
-};
+    for (const hit of hits) {
+      const s = hit._source ?? {};
+      const units =
+        s.application_details?.residential_details
+          ?.total_no_proposed_residential_units;
+      if (units === null || units === undefined) continue;
+      if (units < MIN_UNITS || units > MAX_UNITS) continue;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+      const reference = s.id ?? s.lpa_app_no;
+      if (!reference || !s.description || seen.has(reference)) continue;
+      seen.add(reference);
 
-function randomMs(min: number, max: number): number {
-  return Math.floor(min + Math.random() * (max - min));
-}
-
-// Fisher-Yates: shuffle so we don't hit councils in the same order each run.
-// Predictable order is a tell for batch scrapers.
-function shuffled<T>(arr: readonly T[]): T[] {
-  const copy = [...arr];
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy;
-}
-
-const UNIT_PATTERNS = [
-  /(\d+)\s*(?:no\.?\s*)?(?:residential\s+)?(?:unit|flat|dwelling|apartment|home|bedroom)/i,
-  /(?:provision|erection|construction|demolition\s+and\s+erection)\s+of\s+(\d+)/i,
-  /(\d+)\s*(?:x\s*)?(?:affordable|market|private)\s+(?:residential\s+)?(?:unit|flat|home|dwelling)/i,
-];
-
-// Return the explicit unit count from the description, or 0 if none found.
-// (Old behaviour defaulted to 10, which let through every small extension
-// that happened to contain the word "dwelling". Now we require an actual
-// number.)
-function extractUnitCount(description: string): number {
-  for (const pattern of UNIT_PATTERNS) {
-    const match = description.match(pattern);
-    if (match?.[1]) {
-      const n = parseInt(match[1], 10);
-      if (Number.isFinite(n)) return n;
+      out.push({
+        reference,
+        council: councilFromId(s.id, s.borough),
+        address: buildAddress(s),
+        description: s.description,
+        units,
+        submittedAt:
+          parseUkDate(s.valid_date) ?? parseUkDate(s.last_updated) ?? new Date(),
+        applicant: s.application_details?.lead_developer_company_name ?? undefined,
+        decidedAt: includeDecided
+          ? parseUkDate(s.decision_date) ?? parseUkDate(s.last_updated)
+          : undefined,
+      });
     }
+
+    if (hits.length < PLD_PAGE_SIZE) break;
   }
-  return 0;
+
+  return out;
 }
 
-// Common "tiny" application keywords — if the description matches any of
-// these without ALSO containing a clear multi-unit indicator, it's almost
-// certainly a domestic extension, not a development opportunity.
+// Common "tiny" application keywords — a backstop against domestic extensions
+// that slip through with a non-zero unit count (e.g. a granny-annexe counted as
+// +1). PLD's structured unit filter already excludes most 0-unit extensions.
 const TINY_APPLICATION_PATTERNS = [
   /\b(rear|front|side|loft|garage|porch|outbuilding|conservatory|garden\s+room|shed|fence|tree)\s+(extension|conversion|alteration|works?)/i,
   /\bsingle\s+(storey|story)\s+(rear|front|side|infill)\s+extension/i,
   /\binternal\s+alterations?\b/i,
-  /\bchange\s+of\s+use\s+from\s+\w+\s+to\s+(single\s+)?(dwelling|residential)\s*(house|unit)?\s*(only|\.|\,|$)/i,
-  /\bdwelling\s+(house|extension)\b.*?\b(single|one|1)\b/i,
 ];
 
 function looksLikeTinyApplication(description: string): boolean {
@@ -320,17 +234,17 @@ function looksLikeTinyApplication(description: string): boolean {
 }
 
 // Qualifies an application as an IdealLand target: a genuine residential scheme
-// in the 1-9 unit band (below the 10-unit affordable-housing threshold), and
-// NOT a domestic extension / single-house tinkering. We require an explicit
-// unit count in the description — schemes that don't state a number don't
-// qualify, which keeps precision high and avoids surfacing 10+ schemes.
-function looksLikeTargetResidential(description: string): boolean {
-  if (looksLikeTinyApplication(description)) return false;
-  const units = extractUnitCount(description);
-  return units >= MIN_UNITS && units <= MAX_UNITS;
+// in the 1-9 unit band, and not an obvious domestic extension.
+function qualifies(app: ScrapedApplication): boolean {
+  if (app.units < MIN_UNITS || app.units > MAX_UNITS) return false;
+  if (looksLikeTinyApplication(app.description)) return false;
+  return true;
 }
 
-export async function scanCouncils(): Promise<{
+export async function scanCouncils(opts?: {
+  silent?: boolean;
+  windowDays?: number;
+}): Promise<{
   found: number;
   alerted: number;
   boroughsScanned: number;
@@ -341,6 +255,11 @@ export async function scanCouncils(): Promise<{
   });
 
   try {
+    const windowDays = opts?.windowDays ?? LIVE_WINDOW_DAYS;
+    const scraped = await fetchFromPLD({ windowDays });
+    const relevant = scraped.filter(qualifies);
+    const councilsSeen = new Set(relevant.map((a) => a.council));
+
     const newApplications: Array<{
       id: string;
       reference: string;
@@ -351,107 +270,85 @@ export async function scanCouncils(): Promise<{
       submittedAt: Date;
     }> = [];
 
-    let boroughsBlocked = 0;
-    let isFirstBorough = true;
+    for (const app of relevant) {
+      const existing = await prisma.planningApplication.findUnique({
+        where: { reference: app.reference },
+      });
+      if (existing) continue;
 
-    // PRIMARY: pull from planning.data.gov.uk for all 33 London LPAs. Free,
-    // official, no Cloudflare. If a borough returns empty, fall back to the
-    // direct Idox scrape (currently blocked by Cloudflare from the droplet IP
-    // but kept in case we add a scraping proxy later).
-    const idoxByName = new Map(IDOX_BOROUGHS.map((b) => [b.council.toLowerCase(), b.baseUrl] as const));
+      const created = await prisma.planningApplication.create({
+        data: {
+          reference: app.reference,
+          address: app.address,
+          description: app.description,
+          council: app.council,
+          units: app.units,
+          status: "submitted",
+          applicant: app.applicant ?? null,
+          submittedAt: app.submittedAt,
+          alertSent: false,
+        },
+      });
 
-    for (const { council, orgEntity } of shuffled(LONDON_LPAS_GOVUK)) {
-      if (!isFirstBorough) {
-        // 1-3s polite delay between gov.uk requests
-        await sleep(randomMs(1000, 3000));
-      }
-      isFirstBorough = false;
-
-      let scraped = await fetchFromGovUk(orgEntity);
-
-      // Fallback: try the legacy Idox scrape if gov.uk returned nothing AND
-      // we have an Idox URL for this council. Wrapped so a fallback failure
-      // doesn't blow up the run.
-      if (scraped.length === 0) {
-        const baseUrl = idoxByName.get(council.toLowerCase()) ?? idoxByName.get(council.split(" upon ")[0].toLowerCase());
-        if (baseUrl) {
-          try {
-            scraped = await scrapeIdoxCouncil(council, baseUrl);
-          } catch {
-            // Idox is expected to fail on Cloudflare; ignore.
-          }
-        }
-      }
-
-      if (scraped.length === 0) boroughsBlocked++;
-
-      const relevant = scraped.filter((app) => looksLikeTargetResidential(app.description));
-
-      for (const app of relevant) {
-        const existing = await prisma.planningApplication.findUnique({
-          where: { reference: app.reference },
-        });
-        if (existing) continue;
-
-        const created = await prisma.planningApplication.create({
-          data: {
-            reference: app.reference,
-            address: app.address,
-            description: app.description,
-            council,
-            units: extractUnitCount(app.description),
-            status: "submitted",
-            applicant: app.applicant ?? null,
-            submittedAt: app.submittedAt,
-            alertSent: false,
-          },
-        });
-
-        newApplications.push(created);
-      }
+      newApplications.push(created);
     }
 
+    let alerted = 0;
+
     if (newApplications.length > 0) {
+      // Mark every new row alerted up-front so a later run never re-alerts it —
+      // including the ones we intentionally cap out of this run's outbound.
       await prisma.planningApplication.updateMany({
         where: { id: { in: newApplications.map((a) => a.id) } },
         data: { alertSent: true },
       });
 
-      const alertPayload = newApplications.map((a) => ({
-        reference: a.reference,
-        address: a.address,
-        council: a.council,
-        units: a.units,
-        description: a.description,
-        submittedAt: a.submittedAt,
-      }));
+      if (!opts?.silent) {
+        const freshest = [...newApplications]
+          .sort((a, b) => b.submittedAt.getTime() - a.submittedAt.getTime())
+          .slice(0, MAX_ALERTS_PER_RUN);
+        alerted = freshest.length;
 
-      // Alert internal team via Telegram (instant push) + email, then
-      // auto-send to the developer mailing list. Each no-ops gracefully if
-      // its channel isn't configured, so any subset can run independently.
-      await Promise.allSettled([
-        sendTelegramAlert(alertPayload),
-        sendPlanningAlert(alertPayload),
-        autoSendApplicationAlert(alertPayload),
-      ]);
+        const alertPayload = freshest.map((a) => ({
+          reference: a.reference,
+          address: a.address,
+          council: a.council,
+          units: a.units,
+          description: a.description,
+          submittedAt: a.submittedAt,
+        }));
+
+        // Internal channels (Telegram + email to the IdealLand team) always
+        // fire; external outreach to the developer mailing list is gated behind
+        // PLANNING_AUTO_OUTREACH so a wide scan can't spam real contacts. Each
+        // no-ops gracefully if its channel isn't configured.
+        const channels: Array<Promise<unknown>> = [
+          sendTelegramAlert(alertPayload),
+          sendPlanningAlert(alertPayload),
+        ];
+        if (AUTO_OUTREACH_ENABLED) {
+          channels.push(autoSendApplicationAlert(alertPayload));
+        }
+        await Promise.allSettled(channels);
+      }
     }
-
-    const boroughsScanned = LONDON_LPAS_GOVUK.length - boroughsBlocked;
 
     await prisma.automationRun.update({
       where: { id: runRecord.id },
       data: {
         status: "completed",
         completedAt: new Date(),
-        summary: `Scanned ${boroughsScanned}/${LONDON_LPAS_GOVUK.length} boroughs via planning.data.gov.uk (${boroughsBlocked} empty/unavailable). Found ${newApplications.length} new ${MIN_UNITS}-${MAX_UNITS} unit applications.`,
+        summary: `Scanned Planning London DataHub (last ${windowDays}d, ${councilsSeen.size} boroughs with matches). Found ${newApplications.length} new ${MIN_UNITS}-${MAX_UNITS} unit applications${
+          opts?.silent ? " (silent backfill)" : `, alerted ${alerted}`
+        }.`,
       },
     });
 
     return {
       found: newApplications.length,
-      alerted: newApplications.length,
-      boroughsScanned,
-      boroughsBlocked,
+      alerted,
+      boroughsScanned: councilsSeen.size,
+      boroughsBlocked: 0,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -464,7 +361,7 @@ export async function scanCouncils(): Promise<{
 }
 
 // Historical backfill: pull DECIDED applications (approved/refused) from the
-// last `lookbackDays` across all London LPAs, in the same 1-9 unit band. Unlike
+// last `lookbackDays` across London, in the same 1-9 unit band. Unlike
 // scanCouncils this is a one-shot research tool — it stores decided records for
 // James to review past decisions and does NOT fire any alerts/emails. Records
 // are marked status "decided" with their decision date; existing references are
@@ -480,45 +377,41 @@ export async function scanHistoricalDecisions(lookbackDays = 365): Promise<{
 
   try {
     const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+    const scraped = await fetchFromPLD({
+      includeDecided: true,
+      windowDays: lookbackDays,
+    });
+    const relevant = scraped.filter(
+      (app) => qualifies(app) && app.decidedAt && app.decidedAt >= cutoff
+    );
+
     let found = 0;
-    let isFirst = true;
+    const councilsSeen = new Set<string>();
 
-    for (const { council, orgEntity } of LONDON_LPAS_GOVUK) {
-      if (!isFirst) await sleep(randomMs(1000, 3000));
-      isFirst = false;
+    for (const app of relevant) {
+      councilsSeen.add(app.council);
+      const existing = await prisma.planningApplication.findUnique({
+        where: { reference: app.reference },
+      });
+      if (existing) continue;
 
-      const scraped = await fetchFromGovUk(orgEntity, { includeDecided: true });
-      const relevant = scraped.filter(
-        (app) =>
-          app.decidedAt &&
-          app.decidedAt >= cutoff &&
-          looksLikeTargetResidential(app.description)
-      );
-
-      for (const app of relevant) {
-        const existing = await prisma.planningApplication.findUnique({
-          where: { reference: app.reference },
-        });
-        if (existing) continue;
-
-        await prisma.planningApplication.create({
-          data: {
-            reference: app.reference,
-            address: app.address,
-            description: app.description,
-            council,
-            units: extractUnitCount(app.description),
-            status: "decided",
-            applicant: app.applicant ?? null,
-            submittedAt: app.submittedAt,
-            decidedAt: app.decidedAt,
-            // Suppress all outreach — this is historical research, not a live lead.
-            alertSent: true,
-            decisionAlertSent: true,
-          },
-        });
-        found++;
-      }
+      await prisma.planningApplication.create({
+        data: {
+          reference: app.reference,
+          address: app.address,
+          description: app.description,
+          council: app.council,
+          units: app.units,
+          status: "decided",
+          applicant: app.applicant ?? null,
+          submittedAt: app.submittedAt,
+          decidedAt: app.decidedAt,
+          // Suppress all outreach — this is historical research, not a live lead.
+          alertSent: true,
+          decisionAlertSent: true,
+        },
+      });
+      found++;
     }
 
     await prisma.automationRun.update({
@@ -526,11 +419,11 @@ export async function scanHistoricalDecisions(lookbackDays = 365): Promise<{
       data: {
         status: "completed",
         completedAt: new Date(),
-        summary: `Backfilled ${found} decided ${MIN_UNITS}-${MAX_UNITS} unit applications from the last ${lookbackDays} days across ${LONDON_LPAS_GOVUK.length} boroughs.`,
+        summary: `Backfilled ${found} decided ${MIN_UNITS}-${MAX_UNITS} unit applications from the last ${lookbackDays} days across ${councilsSeen.size} boroughs (Planning London DataHub).`,
       },
     });
 
-    return { found, boroughsScanned: LONDON_LPAS_GOVUK.length, lookbackDays };
+    return { found, boroughsScanned: councilsSeen.size, lookbackDays };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await prisma.automationRun.update({
