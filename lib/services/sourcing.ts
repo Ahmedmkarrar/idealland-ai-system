@@ -99,6 +99,22 @@ function parseUkDate(value?: string | null): Date | undefined {
   return Number.isNaN(iso.getTime()) ? undefined : iso;
 }
 
+// PLD stores free-text fields (description, street names) HTML-encoded — e.g.
+// "Change&nbsp;of use", "flats&amp;offices". Decode the handful of entities that
+// actually appear so both the dashboard and the Claude scoring/outreach prompts
+// see clean prose. Also collapse the non-breaking spaces left behind.
+const HTML_ENTITIES: Record<string, string> = {
+  "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">",
+  "&quot;": '"', "&apos;": "'", "&#39;": "'", "&#38;": "&",
+};
+function decodeEntities(value: string): string {
+  return value
+    .replace(/&nbsp;|&amp;|&lt;|&gt;|&quot;|&apos;|&#39;|&#38;/g, (m) => HTML_ENTITIES[m] ?? m)
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Council name from the PLD document id prefix ("Tower_Hamlets-PA_21..." →
 // "Tower Hamlets"). The `borough` field is inconsistent across boroughs (e.g.
 // "Enfield" vs "Enfield Council", "LB Bromley" vs "Bromley Custodian Code"), so
@@ -113,7 +129,7 @@ function councilFromId(id?: string, borough?: string): string {
 
 function buildAddress(s: PldSource): string {
   const parts = [s.site_number, s.street_name, s.secondary_street_name, s.postcode]
-    .map((p) => (p === null || p === undefined ? "" : String(p).trim()))
+    .map((p) => (p === null || p === undefined ? "" : decodeEntities(String(p))))
     .filter((p) => p.length > 0);
   if (parts.length > 0) return parts.join(", ");
   return `${councilFromId(s.id, s.borough)} (ref ${s.lpa_app_no ?? s.id ?? "unknown"})`;
@@ -203,7 +219,7 @@ async function fetchFromPLD(opts?: {
         reference,
         council: councilFromId(s.id, s.borough),
         address: buildAddress(s),
-        description: s.description,
+        description: decodeEntities(s.description),
         units,
         submittedAt:
           parseUkDate(s.valid_date) ?? parseUkDate(s.last_updated) ?? new Date(),
