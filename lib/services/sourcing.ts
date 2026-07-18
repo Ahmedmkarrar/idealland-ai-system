@@ -263,8 +263,10 @@ export async function scanCouncils(opts?: {
 }): Promise<{
   found: number;
   alerted: number;
-  boroughsScanned: number;
-  boroughsBlocked: number;
+  // Boroughs that returned at least one qualifying scheme — NOT a coverage
+  // figure. The DataHub is queried London-wide in one request, so a low number
+  // here means a quiet window, not a partial scan.
+  boroughsWithMatches: number;
 }> {
   const runRecord = await prisma.automationRun.create({
     data: { type: "sourcing", status: "running" },
@@ -363,8 +365,7 @@ export async function scanCouncils(opts?: {
     return {
       found: newApplications.length,
       alerted,
-      boroughsScanned: councilsSeen.size,
-      boroughsBlocked: 0,
+      boroughsWithMatches: councilsSeen.size,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -384,7 +385,8 @@ export async function scanCouncils(opts?: {
 // skipped so it's safe to re-run.
 export async function scanHistoricalDecisions(lookbackDays = 365): Promise<{
   found: number;
-  boroughsScanned: number;
+  // See scanCouncils — boroughs with matches, not a coverage figure.
+  boroughsWithMatches: number;
   lookbackDays: number;
 }> {
   const runRecord = await prisma.automationRun.create({
@@ -439,7 +441,7 @@ export async function scanHistoricalDecisions(lookbackDays = 365): Promise<{
       },
     });
 
-    return { found, boroughsScanned: councilsSeen.size, lookbackDays };
+    return { found, boroughsWithMatches: councilsSeen.size, lookbackDays };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await prisma.automationRun.update({

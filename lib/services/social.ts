@@ -17,6 +17,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { withRetry } from "@/lib/retry";
 import { gatherPdfContextForApp } from "@/lib/services/pdf";
+import { persistImage } from "@/lib/services/images";
 
 const PLATFORMS = ["instagram", "linkedin", "tiktok", "facebook"] as const;
 
@@ -93,7 +94,17 @@ Write ONLY the post text. No quotes, no labels, no explanation.`,
   }
 }
 
-async function generateImageWithDalle(units: number, location: string): Promise<string | null> {
+interface GeneratedImage {
+  // Filename in our own storage — this is what the dashboard renders.
+  path: string;
+  // OpenAI's URL, kept for provenance. Expires after ~1 hour; never render it.
+  url: string | null;
+}
+
+// Asks DALL-E for the raw bytes (response_format: "b64_json") rather than the
+// default URL, which expires after ~1 hour and would leave every post older
+// than that pointing at nothing. We persist our own copy immediately.
+async function generateImageWithDalle(units: number, location: string): Promise<GeneratedImage | null> {
   if (!isOpenAiConfigured()) return null;
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -106,10 +117,17 @@ async function generateImageWithDalle(units: number, location: string): Promise<
         n: 1,
         size: "1024x1024",
         quality: "standard",
+        response_format: "b64_json",
       })
     );
 
-    return response.data?.[0]?.url ?? null;
+    const b64 = response.data?.[0]?.b64_json;
+    if (!b64) return null;
+
+    const stored = await persistImage(Buffer.from(b64, "base64"));
+    if (!stored) return null;
+
+    return { path: stored, url: response.data?.[0]?.url ?? null };
   } catch {
     return null;
   }
@@ -153,8 +171,9 @@ export async function generateAndSchedulePosts(
       // generateContentWithClaude handles missing context cleanly.
       const pdfContext = await gatherPdfContextForApp(app.id);
 
-      const imageUrl = await generateImageWithDalle(app.units, app.council);
-      const imageGeneratedAt = imageUrl ? new Date() : null;
+      // One image per application, reused across all four platform posts.
+      const image = await generateImageWithDalle(app.units, app.council);
+      const imageGeneratedAt = image ? new Date() : null;
 
       for (const platform of PLATFORMS) {
         const alreadyHas = await prisma.socialPost.findFirst({
@@ -172,7 +191,8 @@ export async function generateAndSchedulePosts(
           data: {
             platform,
             content,
-            imageUrl: imageUrl ?? null,
+            imageUrl: image?.url ?? null,
+            imagePath: image?.path ?? null,
             imageGeneratedAt,
             status: "draft",
             approvalStatus: "pending_review",

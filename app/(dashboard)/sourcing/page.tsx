@@ -178,15 +178,15 @@ export default function SourcingPage() {
   const unanalyzedCount = applications.filter((a) => !a.intelligenceSummary || !a.leadScore).length;
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-8 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Planning Sourcing</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Monitoring all 27 London boroughs for 10+ unit residential developments
+            Monitoring all 33 London boroughs for 1&ndash;9 unit residential schemes
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {unanalyzedCount > 0 && (
             <Button onClick={handleBulkAnalyze} disabled={isBulkAnalyzing} variant="outline">
               {isBulkAnalyzing ? (
@@ -225,7 +225,7 @@ export default function SourcingPage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: "Total", value: applications.length, color: "text-foreground" },
           { label: "Submitted", value: applications.filter((a) => a.status === "submitted").length, color: "text-blue-600" },
@@ -243,7 +243,7 @@ export default function SourcingPage() {
 
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div className="relative flex-1">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -254,7 +254,7 @@ export default function SourcingPage() {
               />
             </div>
             <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "all")}>
-              <SelectTrigger className="w-40">
+              <SelectTrigger className="w-full sm:w-40">
                 <SelectValue placeholder="Filter status" />
               </SelectTrigger>
               <SelectContent>
@@ -266,7 +266,7 @@ export default function SourcingPage() {
               </SelectContent>
             </Select>
             <Select value={sortBy} onValueChange={(v) => setSortBy(v ?? "submitted")}>
-              <SelectTrigger className="w-36">
+              <SelectTrigger className="w-full sm:w-36">
                 <SelectValue placeholder="Sort by" />
               </SelectTrigger>
               <SelectContent>

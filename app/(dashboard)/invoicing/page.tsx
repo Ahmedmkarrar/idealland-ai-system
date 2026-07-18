@@ -148,7 +148,7 @@ export default function InvoicingPage() {
   };
 
   if (isLoading) {
-    return <div className="p-8"><p className="text-muted-foreground">Loading invoicing…</p></div>;
+    return <div className="p-4 sm:p-8"><p className="text-muted-foreground">Loading invoicing…</p></div>;
   }
 
   const totalOutstanding = invoices
@@ -163,8 +163,8 @@ export default function InvoicingPage() {
     .reduce((sum, i) => sum + i.amount, 0);
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-8 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Invoicing</h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -192,7 +192,7 @@ export default function InvoicingPage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-6">
             <p className="text-sm text-muted-foreground">Active Clients</p>
@@ -246,7 +246,7 @@ export default function InvoicingPage() {
                   <Label htmlFor="billingEmail">Billing email (optional)</Label>
                   <Input id="billingEmail" type="email" value={newClient.billingEmail} onChange={(e) => setNewClient({ ...newClient, billingEmail: e.target.value })} />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label>Billing model</Label>
                     <Select value={newClient.billingModel} onValueChange={(v) => v && setNewClient({ ...newClient, billingModel: v })}>

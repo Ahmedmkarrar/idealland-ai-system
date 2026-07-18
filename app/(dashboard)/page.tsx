@@ -156,13 +156,14 @@ export default function OverviewPage() {
     const response = await fetch("/api/cron/trigger", { method: "POST" });
     const result = await response.json();
     if (result.sourcing) {
-      const s = result.sourcing as { found?: number; boroughsScanned?: number; boroughsBlocked?: number; error?: string };
+      const s = result.sourcing as { found?: number; boroughsWithMatches?: number; error?: string };
       if (s.error) {
         alert(`Sourcing failed: ${s.error}`);
       } else {
+        const found = s.found ?? 0;
         alert(
           `Scan complete.\n` +
-          `Sourcing: ${s.found ?? 0} new (scanned ${s.boroughsScanned ?? 0}/27, blocked ${s.boroughsBlocked ?? 0}).\n` +
+          `Sourcing: ${found} new ${found === 1 ? "opportunity" : "opportunities"} across ${s.boroughsWithMatches ?? 0} borough(s).\n` +
           `See Recent Automation Runs below for full details.`
         );
       }
@@ -173,8 +174,8 @@ export default function OverviewPage() {
 
   if (!stats) {
     return (
-      <div className="p-8 space-y-6">
-        <div className="grid grid-cols-5 gap-4">
+      <div className="p-4 sm:p-8 space-y-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           {Array.from({ length: 5 }).map((_, i) => (
             <Skeleton key={i} className="h-32 rounded-xl" />
           ))}
@@ -219,15 +220,15 @@ export default function OverviewPage() {
   ];
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-8 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Automation Overview</h1>
           <p className="text-muted-foreground text-sm mt-1">
             4 automations running for IdealLand (Sourcing · Documents · Social · Mailing)
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button onClick={handleSeed} disabled={isSeeding} variant="outline" size="sm">
             {isSeeding ? (
               <><RefreshCw className="w-4 h-4 mr-2 animate-spin" />Loading contacts...</>
@@ -261,7 +262,7 @@ export default function OverviewPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="flex items-start gap-2">
                 <Zap className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
                 <div>
@@ -312,7 +313,7 @@ export default function OverviewPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-7 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
               {CONFIG_LABELS.map(({ key, label, description }) => {
                 const isActive = configStatus[key];
                 return (
@@ -347,7 +348,7 @@ export default function OverviewPage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map(({ title, icon: Icon, value, sub, color, bg }) => (
           <Card key={title}>
             <CardContent className="pt-6">
@@ -366,7 +367,7 @@ export default function OverviewPage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Recent Automation Runs</CardTitle>

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RefreshCw, Plus, Send, Mail, Users, BarChart3, Sparkles, Check, AlertCircle } from "lucide-react";
 
 interface MailingCampaign {
@@ -40,6 +41,7 @@ interface OutreachEmail {
   subject: string;
   body: string;
   status: string;
+  outcome: string | null;
   sentAt: string | null;
   errorMessage: string | null;
   createdAt: string;
@@ -58,6 +60,21 @@ const STATUS_COLORS: Record<string, string> = {
   sent: "bg-green-100 text-green-800",
   failed: "bg-red-100 text-red-800",
 };
+
+// What came back after a send. Distinct from status, which only says whether
+// the email left the building.
+const OUTCOMES = ["replied", "interested", "dead", "closed-won"] as const;
+
+const OUTCOME_COLORS: Record<string, string> = {
+  replied: "bg-blue-100 text-blue-800",
+  interested: "bg-violet-100 text-violet-800",
+  dead: "bg-gray-100 text-gray-600",
+  "closed-won": "bg-emerald-100 text-emerald-800",
+};
+
+// The Select uses a sentinel rather than "" because an empty string is not a
+// selectable value in this Select implementation.
+const NO_OUTCOME = "none";
 
 const TYPE_COLORS: Record<string, string> = {
   developer: "bg-blue-100 text-blue-800",
@@ -100,6 +117,21 @@ export default function MailingPage() {
     }
     await fetchData();
     setSendingOutreachId(null);
+  };
+
+  const handleSetOutcome = async (outreachId: string, value: string) => {
+    const outcome = value === NO_OUTCOME ? null : value;
+    const response = await fetch(`/api/outreach/${outreachId}/outcome`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome }),
+    });
+    const result = await response.json();
+    if (!result.ok) {
+      alert(`Could not record outcome: ${result.reason ?? result.error ?? "unknown error"}`);
+      return;
+    }
+    await fetchData();
   };
 
   // Group outreach drafts by application so staff sees them per opportunity.
@@ -147,8 +179,8 @@ export default function MailingPage() {
   const avgOpenRate = totalSent > 0 ? (totalOpens / totalSent) * 100 : 0;
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-8 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Mailing Automation</h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -164,7 +196,7 @@ export default function MailingPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: "Active Contacts", value: contacts.filter((c) => c.active).length, icon: Users },
           { label: "Campaigns Sent", value: campaigns.filter((c) => c.status === "sent").length, icon: Mail },
@@ -186,7 +218,7 @@ export default function MailingPage() {
       </div>
 
       <Tabs defaultValue={pendingOutreachCount > 0 ? "outreach" : "campaigns"}>
-        <TabsList>
+        <TabsList className="w-full overflow-x-auto">
           <TabsTrigger value="outreach">
             <Sparkles className="w-3.5 h-3.5 mr-1.5" />
             AI Outreach Drafts {pendingOutreachCount > 0 && `(${pendingOutreachCount})`}
@@ -251,9 +283,28 @@ export default function MailingPage() {
                                 </Button>
                               )}
                               {email.status === "sent" && (
-                                <Badge className="bg-green-100 text-green-800 border-0 text-xs">
-                                  <Check className="w-3 h-3 mr-0.5" />sent
-                                </Badge>
+                                <>
+                                  <Badge className="bg-green-100 text-green-800 border-0 text-xs">
+                                    <Check className="w-3 h-3 mr-0.5" />sent
+                                  </Badge>
+                                  <Select
+                                    value={email.outcome ?? NO_OUTCOME}
+                                    onValueChange={(v) => handleSetOutcome(email.id, v ?? NO_OUTCOME)}
+                                  >
+                                    <SelectTrigger
+                                      className={`h-7 w-32 text-xs ${email.outcome ? OUTCOME_COLORS[email.outcome] ?? "" : ""}`}
+                                      aria-label={`Outcome for email to ${email.contactName}`}
+                                    >
+                                      <SelectValue placeholder="No outcome" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value={NO_OUTCOME}>No outcome</SelectItem>
+                                      {OUTCOMES.map((o) => (
+                                        <SelectItem key={o} value={o}>{o}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </>
                               )}
                               {email.status === "failed" && (
                                 <Badge className="bg-red-100 text-red-800 border-0 text-xs" title={email.errorMessage ?? ""}>
@@ -315,7 +366,7 @@ export default function MailingPage() {
                     </div>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-3 gap-4 mb-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-3">
                       {[
                         { label: "Recipients", value: campaign.recipientCount },
                         { label: "Opens", value: `${campaign.openCount} (${openRate.toFixed(0)}%)` },

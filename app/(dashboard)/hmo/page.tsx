@@ -193,8 +193,8 @@ export default function HmoPage() {
   const hotLeads = properties.filter((p) => (p.aiScore ?? p.sellLikelihood ?? 0) >= 8).length;
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
-      <div className="flex items-start justify-between mb-6">
+    <div className="p-4 sm:p-8 max-w-7xl mx-auto">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold flex items-center gap-2">
             <Home className="w-6 h-6" /> HMO Acquisition Sourcing
@@ -220,14 +220,14 @@ export default function HmoPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <Card><CardContent className="pt-6"><p className="text-xs text-muted-foreground uppercase">Total HMOs</p><p className="text-2xl font-bold">{totalHmos.toLocaleString()}</p></CardContent></Card>
         <Card><CardContent className="pt-6"><p className="text-xs text-muted-foreground uppercase">Portfolio owners (2+)</p><p className="text-2xl font-bold">{owners.length.toLocaleString()}</p></CardContent></Card>
         <Card><CardContent className="pt-6"><p className="text-xs text-muted-foreground uppercase">Hot leads (score 8+)</p><p className="text-2xl font-bold text-emerald-600">{hotLeads.toLocaleString()}</p></CardContent></Card>
         <Card><CardContent className="pt-6"><p className="text-xs text-muted-foreground uppercase">AI analysed</p><p className="text-2xl font-bold">{analyzedCount.toLocaleString()}<span className="text-sm text-muted-foreground font-normal"> / {totalHmos.toLocaleString()}</span></p></CardContent></Card>
       </div>
 
-      <div className="flex gap-2 mb-4 items-center">
+      <div className="flex flex-wrap gap-2 mb-4 items-center">
         <Button variant={tab === "portfolios" ? "default" : "outline"} size="sm" onClick={() => setTab("portfolios")}>
           Portfolio owners
         </Button>
@@ -235,7 +235,7 @@ export default function HmoPage() {
           All properties
         </Button>
         {tab === "properties" && (
-          <div className="ml-auto flex gap-2">
+          <div className="flex flex-wrap gap-2 sm:ml-auto">
             <Button variant="outline" size="sm" onClick={enrichTopOwners} disabled={bulkEnrichBusy}>
               {bulkEnrichBusy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Briefcase className="w-4 h-4 mr-2" />}
               {bulkEnrichBusy ? "Enriching…" : "Enrich top 40 (Companies House)"}
@@ -328,7 +328,7 @@ export default function HmoPage() {
                         <TableCell className="text-xs"><span className="inline-flex items-center gap-1">{ownerIcon(p.ownerType)}{p.holderName ?? "—"}</span></TableCell>
                         <TableCell className="text-center">{p.portfolioSize > 1 ? <Badge variant="outline">{p.portfolioSize}</Badge> : "1"}</TableCell>
                         <TableCell className="text-center">{p.maxPersons ?? "—"}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground max-w-xs">{p.sellReason ?? ""}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-xs truncate">{p.sellReason ?? ""}</TableCell>
                       </TableRow>
                       {isOpen && (
                         <TableRow key={`${p.id}-detail`}>

@@ -14,7 +14,33 @@ interface SocialPost {
   status: string;
   approvalStatus: string | null;
   imageUrl: string | null;
+  imagePath: string | null;
   createdAt: string;
+}
+
+// Posts generated before local image persistence stored only DALL-E's URL,
+// which expires after ~1 hour — those images are unrecoverable, so we show the
+// text note rather than a broken frame. Regenerating the post re-creates one.
+function PostImage({ post }: { post: SocialPost }) {
+  if (post.imagePath) {
+    return (
+      <a href={`/api/images/${post.imagePath}`} target="_blank" rel="noreferrer" className="block mt-3">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={`/api/images/${post.imagePath}`}
+          alt={`AI-generated visualisation for this ${post.platform} post`}
+          loading="lazy"
+          className="rounded-md border w-full max-w-sm aspect-square object-cover hover:opacity-90 transition-opacity"
+        />
+      </a>
+    );
+  }
+
+  if (post.imageUrl) {
+    return <p className="text-xs text-muted-foreground mt-2">Image expired — regenerate to restore</p>;
+  }
+
+  return null;
 }
 
 const PLATFORM_ICONS: Record<string, React.ReactNode> = {
@@ -140,8 +166,8 @@ export default function SocialPage() {
   });
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-8 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Social Content</h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -183,9 +209,7 @@ export default function SocialPage() {
                         </span>
                       </div>
                       <p className="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap">{post.content}</p>
-                      {post.imageUrl && (
-                        <p className="text-xs text-muted-foreground mt-2">Image attached</p>
-                      )}
+                      <PostImage post={post} />
                     </div>
                     <div className="flex gap-2 shrink-0">
                       <Button
@@ -218,7 +242,7 @@ export default function SocialPage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {platformStats.map(({ platform, total, ready, drafts }) => (
           <Card key={platform}>
             <CardContent className="pt-4 pb-4">
@@ -239,11 +263,11 @@ export default function SocialPage() {
 
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-base">Content Feed</CardTitle>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Select value={platformFilter} onValueChange={(v) => setPlatformFilter(v ?? "all")}>
-                <SelectTrigger className="w-36">
+                <SelectTrigger className="w-full sm:w-36">
                   <SelectValue placeholder="Platform" />
                 </SelectTrigger>
                 <SelectContent>
@@ -255,7 +279,7 @@ export default function SocialPage() {
                 </SelectContent>
               </Select>
               <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "all")}>
-                <SelectTrigger className="w-36">
+                <SelectTrigger className="w-full sm:w-36">
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
@@ -283,7 +307,7 @@ export default function SocialPage() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {posts.map((post) => {
                 const ready = isReadyToCopy(post.status);
                 return (
@@ -303,6 +327,7 @@ export default function SocialPage() {
                       </div>
                     </div>
                     <p className="text-sm leading-relaxed whitespace-pre-wrap">{post.content}</p>
+                    <PostImage post={post} />
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs text-muted-foreground">
                         {new Date(post.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}

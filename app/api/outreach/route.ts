@@ -9,7 +9,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const applicationId = searchParams.get("applicationId") ?? undefined;
   const status = searchParams.get("status") ?? undefined;
-  const outreach = await getOutreach({ applicationId, status });
+  const outcome = searchParams.get("outcome") ?? undefined;
+  const outreach = await getOutreach({ applicationId, status, outcome });
   return NextResponse.json({ outreach });
 }
 

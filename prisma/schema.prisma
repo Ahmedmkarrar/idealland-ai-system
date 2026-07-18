@@ -118,7 +118,12 @@ model SocialPost {
   id              String   @id @default(cuid())
   platform        String
   content         String
+  // The provider's original URL. DALL-E's expires after ~1 hour, so it is kept
+  // for provenance only — never render it. Render imagePath instead.
   imageUrl        String?
+  // Filename of the image persisted to local disk at generation time, served
+  // via /api/images/[file]. Null when generation failed or predates persistence.
+  imagePath       String?
   imageGeneratedAt DateTime?
   status          String
   approvalStatus  String   @default("pending_review")
@@ -204,14 +209,25 @@ model OutreachEmail {
   contactName   String
   subject       String
   body          String
-  status        String   @default("draft") // "draft" | "sent" | "skipped" | "failed"
+  // Delivery state only — how far the email got. Kept separate from `outcome`
+  // so a reply never overwrites the record of whether we actually sent.
+  status        String   @default("draft") // "draft" | "sent" | "failed"
+  // What came back. Null until staff records it on the dashboard.
+  outcome       String?  // "replied" | "interested" | "dead" | "closed-won"
+  outcomeAt     DateTime?
   sentAt        DateTime?
   resendId      String?
   errorMessage  String?
   createdAt     DateTime @default(now())
 
+  // One draft per contact per application. Also closes the check-then-write
+  // race where two concurrent POSTs both drafted a full set of five.
+  @@unique([applicationId, contactEmail])
   @@index([applicationId])
   @@index([status])
+  // Backs the per-contact cooldown lookup in pickContacts().
+  @@index([contactEmail, createdAt])
+  @@index([outcome])
 }
 
 // IdealLand's own paying customers — clients we auto-bill via the invoicing

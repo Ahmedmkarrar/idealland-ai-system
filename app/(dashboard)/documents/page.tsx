@@ -65,8 +65,8 @@ export default function DocumentsPage() {
   const retrievalRate = documents.length > 0 ? (retrievedCount / documents.length) * 100 : 0;
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-8 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Document Retrieval</h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -82,7 +82,7 @@ export default function DocumentsPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-6">
             <p className="text-sm text-muted-foreground">Total Documents</p>
