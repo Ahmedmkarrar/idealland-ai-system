@@ -5,9 +5,9 @@
 | | |
 |---|---|
 | **Status** | 🟢 Live & healthy |
-| **Deployed commit** | `7502877` |
+| **Deployed commit** | `c9ed5d0` |
 | **Prod URL** | https://143-110-168-225.nip.io |
-| **Last verified** | 16 Jul 2026 |
+| **Last verified** | 18 Jul 2026 |
 
 ---
 
@@ -24,7 +24,7 @@ git checkout feat/deploy-digitalocean   # <-- the real code
 - **Repo (public):** https://github.com/Ahmedmkarrar/idealland-ai-system
 - **Working branch:** `feat/deploy-digitalocean`
 - **Node:** 20 LTS
-- **Recent changes (16 Jul):** `78b3aa1` new data source · `7502877` HTML-entity decode fix
+- **Recent changes (18 Jul):** `c9ed5d0` outreach outcome tracking · local AI-image persistence · mobile-first dashboard · copy/accuracy fixes
 
 ---
 
@@ -129,9 +129,11 @@ Nothing here blocks the running system — these are the honest edges to pick up
 
 - **[SRC] Branch topology.** Everything lives on `feat/deploy-digitalocean`; `main` and the client upstream (`heyitsmohdd/autom`) are bare. Decide a source-of-truth and merge — no clean release line exists today.
 - **[SEC] Secret hygiene.** Some API keys were historically shared in plaintext chat. Rotate `ANTHROPIC` / `OPENAI` / `RESEND` / `COMPANIES_HOUSE` and stand up a shared secrets vault. Set monthly spend caps on the Anthropic + OpenAI dashboards.
-- **[BUG] DALL·E image expiry.** Generated image URLs expire after ~1 hour, so social posts older than that show a broken image. Download-at-generation or regenerate on demand.
-- **[UI] Stale dashboard label.** `app/(dashboard)/page.tsx:165` still prints `scanned X/27, blocked 0` — copy left over from the old 27-scraper era; the DataHub has no "blocked" concept. Cosmetic only.
 - **[FEAT] Partial features.** Xero invoicing runs in stub mode (marks sent locally without `XERO_CLIENT_ID`); `per_application` billing is in the schema but not implemented; HMLR document pull needs the client's `HMLR_API_KEY`.
+
+**Resolved in `c9ed5d0` (18 Jul):**
+- ~~**[BUG] DALL·E image expiry.**~~ Fixed — images are now fetched as bytes at generation time, persisted to a gitignored `storage/` dir, and served from `/api/images/[file]`. The dashboard renders `imagePath`, never the expiring URL; pre-persistence posts show a "regenerate" note.
+- ~~**[UI] Stale dashboard label.**~~ Fixed — Overview now reports `N opportunities across M borough(s)`; sourcing returns `boroughsWithMatches` instead of the misleading `scanned/blocked` framing.
 
 ---
 
