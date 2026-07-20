@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateOutreachForApp, getOutreach } from "@/lib/services/outreach";
+import { generateOutreachForApp, generateOutreachForTopLeads, getOutreach } from "@/lib/services/outreach";
 import { applyRateLimit } from "@/lib/rate-limit";
 
 export async function GET(request: NextRequest) {
@@ -16,6 +16,9 @@ export async function GET(request: NextRequest) {
 
 interface GenerateBody {
   applicationId?: string;
+  bulk?: boolean;
+  minScore?: number;
+  limit?: number;
 }
 
 export async function POST(request: NextRequest) {
@@ -23,8 +26,18 @@ export async function POST(request: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse;
 
   const body = (await request.json().catch(() => ({}))) as GenerateBody;
+
+  // Bulk: draft outreach for the top undrafted leads in one call.
+  if (body.bulk) {
+    const result = await generateOutreachForTopLeads({
+      minScore: typeof body.minScore === "number" ? body.minScore : undefined,
+      limit: typeof body.limit === "number" ? body.limit : undefined,
+    });
+    return NextResponse.json(result);
+  }
+
   if (!body.applicationId) {
-    return NextResponse.json({ error: "applicationId required" }, { status: 400 });
+    return NextResponse.json({ error: "applicationId or bulk=true required" }, { status: 400 });
   }
 
   const result = await generateOutreachForApp(body.applicationId);

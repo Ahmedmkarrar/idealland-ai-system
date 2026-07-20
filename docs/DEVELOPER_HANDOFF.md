@@ -121,6 +121,8 @@ Every surface exercised end-to-end against the live droplet on 16 Jul 2026, incl
 | Keys wired | resend · anthropic · openai | ✅ live |
 | HMLR · Mixmax · Xero | optional integrations | ⚪ off (by design) |
 
+**Live re-check, 18 Jul 2026 13:04 UTC:** `/api/health` ok · DB 2ms · uptime 12h · last cron `12:00 UTC` completed.
+
 ---
 
 ## 7. Known issues & tech debt
@@ -161,4 +163,4 @@ deploy/              droplet runbook + scripts (deploy.sh, setup-droplet.sh, cro
 docs/                specs, client comms, this handoff
 ```
 
-_Prepared for handoff · verified live 16 Jul 2026 · deployed commit `7502877`. Design decisions trace back to `docs/` and the commit messages on `feat/deploy-digitalocean`._
+_Prepared for handoff · verified live 18 Jul 2026 · deployed commit `c9ed5d0`. Design decisions trace back to `docs/` and the commit messages on `feat/deploy-digitalocean`._

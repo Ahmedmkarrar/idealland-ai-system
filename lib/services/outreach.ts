@@ -238,6 +238,57 @@ export async function generateOutreachForApp(
   return { drafted, skipped };
 }
 
+// Draft outreach across the best unworked leads in one call. This is what
+// makes outreach actually happen at scale — without it, staff would have to
+// expand each of ~2,000 scored leads and click "Draft" individually, so in
+// practice nothing goes out. Picks the highest-scored applications that have
+// no drafts yet and runs generateOutreachForApp on each.
+export async function generateOutreachForTopLeads(options?: {
+  minScore?: number;
+  limit?: number;
+}): Promise<{
+  appsProcessed: number;
+  drafted: number;
+  skipped: number;
+  reason?: string;
+}> {
+  if (!isClaudeConfigured()) {
+    return { appsProcessed: 0, drafted: 0, skipped: 0, reason: "ANTHROPIC_API_KEY not configured" };
+  }
+
+  const minScore = options?.minScore ?? Number(process.env.OUTREACH_MIN_LEAD_SCORE ?? 7);
+  const limit = Math.min(options?.limit ?? 10, 50);
+
+  // Highest-scored, still-open leads that we haven't drafted for yet. The
+  // `none` filter on outreachEmails is what keeps a bulk run from re-drafting
+  // apps a previous run already covered.
+  const candidates = await prisma.planningApplication.findMany({
+    where: {
+      leadScore: { gte: minScore },
+      status: { not: "decided" },
+      outreachEmails: { none: {} },
+    },
+    orderBy: [{ leadScore: "desc" }, { submittedAt: "desc" }],
+    take: limit,
+    select: { id: true },
+  });
+
+  if (candidates.length === 0) {
+    return { appsProcessed: 0, drafted: 0, skipped: 0, reason: `No undrafted leads at score >= ${minScore}` };
+  }
+
+  let drafted = 0;
+  let skipped = 0;
+
+  for (const app of candidates) {
+    const r = await generateOutreachForApp(app.id);
+    drafted += r.drafted;
+    skipped += r.skipped;
+  }
+
+  return { appsProcessed: candidates.length, drafted, skipped };
+}
+
 export async function sendOutreachEmail(
   outreachId: string
 ): Promise<{ ok: boolean; provider: "resend"; reason?: string; resendId?: string }> {

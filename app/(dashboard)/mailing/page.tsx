@@ -108,6 +108,28 @@ export default function MailingPage() {
     setIsLoading(false);
   }, []);
 
+  const [isBulkDrafting, setIsBulkDrafting] = useState(false);
+
+  const handleBulkDraft = async () => {
+    setIsBulkDrafting(true);
+    try {
+      const response = await fetch("/api/outreach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bulk: true, limit: 10 }),
+      });
+      const result = await response.json();
+      if (result.reason && result.drafted === 0) {
+        alert(result.reason);
+      } else {
+        alert(`Drafted ${result.drafted} email(s) across ${result.appsProcessed} top lead(s).`);
+      }
+      await fetchData();
+    } finally {
+      setIsBulkDrafting(false);
+    }
+  };
+
   const handleSendOutreach = async (outreachId: string) => {
     setSendingOutreachId(outreachId);
     const response = await fetch(`/api/outreach/${outreachId}/send`, { method: "POST" });
@@ -228,12 +250,21 @@ export default function MailingPage() {
         </TabsList>
 
         <TabsContent value="outreach" className="mt-4 space-y-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <p className="text-xs text-muted-foreground">
+              Personalised cold emails drafted for the highest-scored leads. Review, then send.
+            </p>
+            <Button size="sm" onClick={handleBulkDraft} disabled={isBulkDrafting}>
+              <Sparkles className={`w-4 h-4 mr-2 ${isBulkDrafting ? "animate-pulse" : ""}`} />
+              {isBulkDrafting ? "Drafting…" : "Draft outreach for top 10 leads"}
+            </Button>
+          </div>
           {Object.keys(outreachByApp).length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">
                 <Sparkles className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
                 <p className="text-sm text-muted-foreground">
-                  No outreach drafts yet. Go to <strong>Sourcing</strong>, expand an application, and click <strong>Draft Outreach</strong> to generate personalised cold emails.
+                  No outreach drafts yet. Click <strong>Draft outreach for top 10 leads</strong> above to auto-generate personalised cold emails for your best-scored opportunities.
                 </p>
               </CardContent>
             </Card>
