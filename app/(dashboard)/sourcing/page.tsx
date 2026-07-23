@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { RefreshCw, Search, ScanLine, Building2, MapPin, Calendar, ChevronDown, ChevronRight, Clock, CheckCircle, XCircle, AlertCircle, Sparkles, Send, Mail } from "lucide-react";
+import { RefreshCw, Search, ScanLine, Building2, MapPin, Calendar, ChevronDown, ChevronRight, Clock, CheckCircle, XCircle, AlertCircle, Sparkles, Send, Mail, Users } from "lucide-react";
 
 interface PlanningApplication {
   id: string;
@@ -24,6 +24,18 @@ interface PlanningApplication {
   leadScore: number | null;
   leadScoreReason: string | null;
   analyzedAt: string | null;
+  councilUrl: string | null;
+  agentName: string | null;
+  agentFirm: string | null;
+  agentEmail: string | null;
+  agentPhone: string | null;
+  agentWebsite: string | null;
+  contactStatus: string | null;
+  contactNotes: string | null;
+  approachSubject: string | null;
+  approachBody: string | null;
+  approachStatus: string | null;
+  approachOutcome: string | null;
   documents: Array<{ id: string; type: string; status: string }>;
 }
 
@@ -32,6 +44,16 @@ function scoreBadgeClass(score: number | null): string {
   if (score >= 8) return "bg-emerald-100 text-emerald-800 border-emerald-200";
   if (score >= 5) return "bg-amber-100 text-amber-800 border-amber-200";
   return "bg-slate-100 text-slate-700 border-slate-200";
+}
+
+// Deterministic last-mile lookups for the human — never scrape LinkedIn.
+function linkedinSearchUrl(name: string | null, firm: string | null): string {
+  const q = [name, firm].filter(Boolean).join(" ");
+  return `https://www.linkedin.com/search/results/all/?keywords=${encodeURIComponent(q || "planning consultant")}`;
+}
+function googleSearchUrl(name: string | null, firm: string | null, council: string): string {
+  const q = [name, firm, name || firm ? "" : `${council} planning agent`, "contact email"].filter(Boolean).join(" ");
+  return `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 }
 
 interface StatusChange {
@@ -142,6 +164,47 @@ export default function SourcingPage() {
         : `Drafted ${result.drafted} outreach email(s). Review on the Mailing page.`
     );
     setGeneratingOutreachId(null);
+  };
+
+  const [findingContactId, setFindingContactId] = useState<string | null>(null);
+  const [draftingApproachId, setDraftingApproachId] = useState<string | null>(null);
+
+  const handleFindContact = async (appId: string, force = false) => {
+    setFindingContactId(appId);
+    const response = await fetch("/api/sourcing/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ applicationId: appId, force }),
+    });
+    const result = await response.json();
+    if (!result.ok) alert(result.reason ?? result.error ?? "Could not find contact");
+    await fetchApplications();
+    setFindingContactId(null);
+  };
+
+  const handleDraftApproach = async (appId: string, force = false) => {
+    setDraftingApproachId(appId);
+    const response = await fetch("/api/sourcing/approach", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ applicationId: appId, force }),
+    });
+    const result = await response.json();
+    if (!result.ok) alert(result.reason ?? result.error ?? "Could not draft approach");
+    await fetchApplications();
+    setDraftingApproachId(null);
+  };
+
+  const handleApproachState = async (
+    appId: string,
+    changes: { status?: string; outcome?: string | null }
+  ) => {
+    await fetch("/api/sourcing/approach", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ applicationId: appId, ...changes }),
+    });
+    await fetchApplications();
   };
 
   const handleToggleHistory = async (applicationId: string) => {
@@ -373,17 +436,6 @@ export default function SourcingPage() {
                                       ? <><RefreshCw className="w-3 h-3 mr-1 animate-spin" />Analyzing</>
                                       : <><Sparkles className="w-3 h-3 mr-1" />{app.intelligenceSummary ? "Re-analyze" : "Analyze"}</>}
                                   </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-7 px-2.5 text-xs"
-                                    onClick={() => handleGenerateOutreach(app.id)}
-                                    disabled={generatingOutreachId === app.id}
-                                  >
-                                    {generatingOutreachId === app.id
-                                      ? <><RefreshCw className="w-3 h-3 mr-1 animate-spin" />Drafting</>
-                                      : <><Mail className="w-3 h-3 mr-1" />Draft Outreach</>}
-                                  </Button>
                                 </div>
                               </div>
                               {app.intelligenceSummary ? (
@@ -404,6 +456,107 @@ export default function SourcingPage() {
                                 <p className="text-sm text-muted-foreground italic">
                                   Not analyzed yet — click <strong>Analyze</strong> to generate intelligence brief + lead score.
                                 </p>
+                              )}
+                            </div>
+
+                            {/* Approach Pack — find the agent + draft the seller approach */}
+                            <div>
+                              <div className="flex items-center justify-between mb-2">
+                                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                                  <Users className="w-3 h-3" />Approach Pack — reach the agent to ask about selling
+                                </p>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2.5 text-xs"
+                                  onClick={() => handleFindContact(app.id, app.contactStatus === "found")}
+                                  disabled={findingContactId === app.id}
+                                >
+                                  {findingContactId === app.id
+                                    ? <><RefreshCw className="w-3 h-3 mr-1 animate-spin" />Researching</>
+                                    : <><Search className="w-3 h-3 mr-1" />{app.contactStatus ? "Re-find contact" : "Find contact"}</>}
+                                </Button>
+                              </div>
+
+                              {!app.contactStatus && (
+                                <p className="text-sm text-muted-foreground italic">
+                                  Click <strong>Find contact</strong> — AI reads the council page + searches the web for the agent/architect who filed this and their contact details.
+                                </p>
+                              )}
+
+                              {app.contactStatus && (
+                                <div className="bg-white border rounded-lg p-3 space-y-3">
+                                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+                                    <div><span className="text-muted-foreground">Agent:</span> <span className="font-medium">{app.agentName ?? "—"}</span></div>
+                                    <div><span className="text-muted-foreground">Firm:</span> <span className="font-medium">{app.agentFirm ?? "—"}</span></div>
+                                    <div>
+                                      <span className="text-muted-foreground">Email:</span>{" "}
+                                      {app.agentEmail
+                                        ? <a href={`mailto:${app.agentEmail}`} className="font-medium text-blue-600 hover:underline">{app.agentEmail}</a>
+                                        : <span className="text-muted-foreground">—</span>}
+                                    </div>
+                                    <div><span className="text-muted-foreground">Phone:</span> <span className="font-medium">{app.agentPhone ?? "—"}</span></div>
+                                  </div>
+
+                                  <div className="flex flex-wrap gap-2 text-xs">
+                                    {app.agentWebsite && (
+                                      <a href={app.agentWebsite.startsWith("http") ? app.agentWebsite : `https://${app.agentWebsite}`} target="_blank" rel="noreferrer" className="px-2 py-1 rounded border text-blue-600 hover:bg-blue-50">Firm website ↗</a>
+                                    )}
+                                    <a href={linkedinSearchUrl(app.agentName, app.agentFirm)} target="_blank" rel="noreferrer" className="px-2 py-1 rounded border text-blue-600 hover:bg-blue-50">LinkedIn search ↗</a>
+                                    <a href={googleSearchUrl(app.agentName, app.agentFirm, app.council)} target="_blank" rel="noreferrer" className="px-2 py-1 rounded border text-blue-600 hover:bg-blue-50">Google search ↗</a>
+                                    {app.councilUrl && (
+                                      <a href={app.councilUrl} target="_blank" rel="noreferrer" className="px-2 py-1 rounded border text-blue-600 hover:bg-blue-50">Council page ↗</a>
+                                    )}
+                                  </div>
+
+                                  {app.contactNotes && (
+                                    <p className="text-xs text-muted-foreground border-t pt-2">{app.contactNotes}</p>
+                                  )}
+
+                                  {/* Seller-approach draft */}
+                                  <div className="border-t pt-3">
+                                    <div className="flex items-center justify-between mb-2">
+                                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Seller-approach email</p>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 px-2.5 text-xs"
+                                        onClick={() => handleDraftApproach(app.id, !!app.approachBody)}
+                                        disabled={draftingApproachId === app.id}
+                                      >
+                                        {draftingApproachId === app.id
+                                          ? <><RefreshCw className="w-3 h-3 mr-1 animate-spin" />Drafting</>
+                                          : <><Mail className="w-3 h-3 mr-1" />{app.approachBody ? "Re-draft" : "Draft approach"}</>}
+                                      </Button>
+                                    </div>
+                                    {app.approachBody ? (
+                                      <div className="space-y-2">
+                                        <p className="text-xs font-semibold">{app.approachSubject}</p>
+                                        <p className="text-sm whitespace-pre-wrap bg-muted/40 rounded p-2">{app.approachBody}</p>
+                                        <div className="flex flex-wrap gap-2">
+                                          <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={() => navigator.clipboard.writeText(`${app.approachSubject}\n\n${app.approachBody}`)}>Copy</Button>
+                                          {app.agentEmail && (
+                                            <a href={`mailto:${app.agentEmail}?subject=${encodeURIComponent(app.approachSubject ?? "")}&body=${encodeURIComponent(app.approachBody ?? "")}`}>
+                                              <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs">Open in email</Button>
+                                            </a>
+                                          )}
+                                          {app.approachStatus !== "sent"
+                                            ? <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={() => handleApproachState(app.id, { status: "sent" })}>Mark sent</Button>
+                                            : (
+                                              <div className="flex items-center gap-1.5">
+                                                <span className="text-xs text-emerald-700 font-medium">Sent ✓ · outcome:</span>
+                                                {(["replied", "interested", "won", "dead"] as const).map((o) => (
+                                                  <button key={o} onClick={() => handleApproachState(app.id, { outcome: app.approachOutcome === o ? null : o })} className={`px-1.5 py-0.5 rounded text-xs border ${app.approachOutcome === o ? "bg-violet-100 text-violet-800 border-violet-300" : "text-muted-foreground hover:bg-muted"}`}>{o}</button>
+                                                ))}
+                                              </div>
+                                            )}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <p className="text-sm text-muted-foreground italic">No draft yet — click <strong>Draft approach</strong> to write the seller-approach email.</p>
+                                    )}
+                                  </div>
+                                </div>
                               )}
                             </div>
 

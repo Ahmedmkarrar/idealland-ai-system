@@ -43,8 +43,8 @@ const AUTO_OUTREACH_ENABLED = process.env.PLANNING_AUTO_OUTREACH === "true";
 //
 // Docs: https://www.london.gov.uk/programmes-strategies/planning/digital-planning/planning-london-datahub
 // ---------------------------------------------------------------------------
-const PLD_SEARCH_URL =
-  "https://planningdata.london.gov.uk/api-guest/applications/_search";
+const PLD_BASE_URL = "https://planningdata.london.gov.uk";
+const PLD_SEARCH_URL = `${PLD_BASE_URL}/api-guest/applications/_search`;
 const PLD_PAGE_SIZE = 250;
 const PLD_MAX_RECORDS = Number(process.env.PLANNING_MAX_RECORDS ?? 2000);
 const PLD_PROPOSED_UNITS_FIELD =
@@ -58,6 +58,7 @@ interface ScrapedApplication {
   units: number; // structured proposed residential unit count from PLD
   submittedAt: Date;
   applicant?: string;
+  councilUrl?: string;
   decidedAt?: Date;
 }
 
@@ -76,6 +77,7 @@ interface PldSource {
   street_name?: string | null;
   secondary_street_name?: string | null;
   postcode?: string | null;
+  url_planning_app?: string | null;
   application_details?: {
     lead_developer_company_name?: string | null;
     residential_details?: {
@@ -127,6 +129,18 @@ function councilFromId(id?: string, borough?: string): string {
   return (borough ?? "London").trim();
 }
 
+// PLD's url_planning_app is a path relative to the datahub host (e.g.
+// "/planning/index.html?fa=getApplication&id=72883"). Make it absolute so it's
+// a clickable landing page for the agent research; leave absolute URLs as-is.
+function absolutePldUrl(url?: string | null): string | undefined {
+  const u = url?.trim();
+  // Reject empties and PLD placeholder junk like "<enter PA URL here>".
+  if (!u || u.includes("<") || u.includes(">")) return undefined;
+  if (/^https?:\/\//i.test(u)) return u;
+  if (!u.startsWith("/")) return undefined; // not a usable relative path
+  return `${PLD_BASE_URL}${u}`;
+}
+
 function buildAddress(s: PldSource): string {
   const parts = [s.site_number, s.street_name, s.secondary_street_name, s.postcode]
     .map((p) => (p === null || p === undefined ? "" : decodeEntities(String(p))))
@@ -162,6 +176,7 @@ async function fetchFromPLD(opts?: {
     "id", "lpa_app_no", "borough", "lpa_name", "description",
     "decision", "decision_date", "status", "valid_date", "last_updated",
     "site_number", "street_name", "secondary_street_name", "postcode",
+    "url_planning_app",
     "application_details.lead_developer_company_name",
     PLD_PROPOSED_UNITS_FIELD,
     "application_details.residential_details.total_no_existing_residential_units",
@@ -224,6 +239,7 @@ async function fetchFromPLD(opts?: {
         submittedAt:
           parseUkDate(s.valid_date) ?? parseUkDate(s.last_updated) ?? new Date(),
         applicant: s.application_details?.lead_developer_company_name ?? undefined,
+        councilUrl: absolutePldUrl(s.url_planning_app),
         decidedAt: includeDecided
           ? parseUkDate(s.decision_date) ?? parseUkDate(s.last_updated)
           : undefined,
@@ -286,6 +302,7 @@ export async function scanCouncils(opts?: {
       description: string;
       units: number;
       submittedAt: Date;
+      councilUrl: string | null;
     }> = [];
 
     for (const app of relevant) {
@@ -303,6 +320,7 @@ export async function scanCouncils(opts?: {
           units: app.units,
           status: "submitted",
           applicant: app.applicant ?? null,
+          councilUrl: app.councilUrl ?? null,
           submittedAt: app.submittedAt,
           alertSent: false,
         },
@@ -422,6 +440,7 @@ export async function scanHistoricalDecisions(lookbackDays = 365): Promise<{
           units: app.units,
           status: "decided",
           applicant: app.applicant ?? null,
+          councilUrl: app.councilUrl ?? null,
           submittedAt: app.submittedAt,
           decidedAt: app.decidedAt,
           // Suppress all outreach — this is historical research, not a live lead.

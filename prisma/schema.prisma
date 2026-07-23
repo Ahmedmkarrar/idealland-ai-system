@@ -83,6 +83,26 @@ model PlanningApplication {
   leadScore           Int?     // 1-10
   leadScoreReason     String?
   analyzedAt          DateTime?
+  // Link back to the council's own planning-portal page (from PLD url_planning_app).
+  // The agent/applicant identity lives there, not in the GLA feed.
+  councilUrl          String?
+  // Contact discovery — who filed the application and how to reach them. This is
+  // the labour-intensive step (agent name + firm + email) IdealLand does by hand.
+  agentName           String?
+  agentFirm           String?
+  agentEmail          String?
+  agentPhone          String?
+  agentWebsite        String?
+  contactStatus       String?  // null | "researching" | "found" | "not_found"
+  contactNotes        String?
+  contactResearchedAt DateTime?
+  // Seller-approach email drafted to the agent ("is the owner open to selling?").
+  approachSubject     String?
+  approachBody        String?
+  approachStatus      String?  // null | "drafted" | "sent"
+  approachSentAt      DateTime?
+  approachOutcome     String?  // null | "replied" | "interested" | "dead" | "won"
+  approachOutcomeAt   DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   documents   Document[]

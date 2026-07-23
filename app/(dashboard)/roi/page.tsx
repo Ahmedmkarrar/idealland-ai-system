@@ -15,6 +15,7 @@ import {
   Trophy,
   Building2,
   TrendingUp,
+  Search,
 } from "lucide-react";
 
 interface RoiSnapshot {
@@ -32,10 +33,9 @@ interface RoiSnapshot {
     leadsScored: number;
     primeLeads: number;
     strongLeads: number;
-    appsWithDrafts: number;
-    emailsDrafted: number;
-    emailsSent: number;
-    appsContacted: number;
+    contactsFound: number;
+    approachesDrafted: number;
+    approachesSent: number;
     replied: number;
     interested: number;
     closedWon: number;
@@ -102,11 +102,11 @@ export default function RoiPage() {
   const funnelSteps = [
     { label: "Sourced", value: roi.funnel.leadsSourced, icon: Boxes, tone: "text-slate-700" },
     { label: "AI-scored", value: roi.funnel.leadsScored, icon: TrendingUp, tone: "text-slate-700" },
-    { label: "Prime (8+)", value: roi.funnel.primeLeads, icon: Trophy, tone: "text-amber-600" },
-    { label: "Contacted", value: roi.funnel.appsContacted, icon: Send, tone: "text-blue-600" },
+    { label: "Contact found", value: roi.funnel.contactsFound, icon: Search, tone: "text-cyan-600" },
+    { label: "Approached", value: roi.funnel.approachesSent, icon: Send, tone: "text-blue-600" },
     { label: "Replied", value: roi.funnel.replied, icon: Reply, tone: "text-indigo-600" },
-    { label: "Interested", value: roi.funnel.interested, icon: Handshake, tone: "text-violet-600" },
-    { label: "Closed-won", value: roi.funnel.closedWon, icon: Trophy, tone: "text-emerald-600" },
+    { label: "Owner interested", value: roi.funnel.interested, icon: Handshake, tone: "text-violet-600" },
+    { label: "Deal won", value: roi.funnel.closedWon, icon: Trophy, tone: "text-emerald-600" },
   ];
 
   return (
@@ -195,7 +195,7 @@ export default function RoiPage() {
               <span className="text-lg font-bold text-violet-700">{money(roi.deal.weightedPipeline)}</span>
             </div>
             <p className="text-xs text-muted-foreground">
-              Reply rate {pct(roi.conversion.replyRate)} · interest rate {pct(roi.conversion.interestRate)} on {roi.funnel.appsContacted} contacted.
+              Reply rate {pct(roi.conversion.replyRate)} · interest rate {pct(roi.conversion.interestRate)} on {roi.funnel.approachesSent} approached.
             </p>
           </CardContent>
         </Card>
@@ -222,9 +222,9 @@ export default function RoiPage() {
               );
             })}
           </div>
-          {roi.funnel.appsContacted === 0 && (
+          {roi.funnel.approachesSent === 0 && (
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4">
-              No outreach sent yet. The pipeline stays at &quot;scored&quot; until emails go out — go to <strong>Mailing → AI Outreach Drafts</strong> and send, or draft in bulk from <strong>Sourcing</strong>.
+              No approaches sent yet. On <strong>Sourcing</strong>, expand a lead → <strong>Find contact</strong> → <strong>Draft approach</strong> → send it to the agent, then mark it sent so the pipeline fills.
             </p>
           )}
         </CardContent>
