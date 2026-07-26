@@ -163,6 +163,84 @@ Return ONLY a JSON object, no prose:
   return { ok: true, result };
 }
 
+// IdealLand's outbound identity in the seller-approach email. Env-overridable so
+// a different team member can send under their own name/number. Lucy James is the
+// primary sourcer; 07973445901 is her line (supplied 2026-07-25). Email is omitted
+// from the sign-off unless IDEALLAND_CONTACT_EMAIL is set — we never guess it.
+const SENDER_NAME = process.env.IDEALLAND_CONTACT_NAME ?? "Lucy James";
+const SENDER_PHONE = process.env.IDEALLAND_CONTACT_PHONE ?? "07973445901";
+const SENDER_EMAIL = process.env.IDEALLAND_CONTACT_EMAIL ?? "";
+const IDEALLAND_WEBSITE = process.env.IDEALLAND_WEBSITE ?? "www.idealland.co.uk";
+
+// A first name is only safe as a greeting when it's a single clean person. Two
+// agents joined by "/" or a comma-separated list get a neutral "Hello,".
+function greeting(agentName: string | null): string {
+  if (!agentName || /[/,&]/.test(agentName)) return "Hello,";
+  const first = agentName.trim().split(/\s+/)[0];
+  return first ? `Dear ${first},` : "Hello,";
+}
+
+function unitPhrase(units: number): string {
+  return `${units} residential ${units === 1 ? "unit" : "units"}`;
+}
+
+function contactLine(): string {
+  return SENDER_EMAIL
+    ? `on ${SENDER_PHONE} or by email ${SENDER_EMAIL}`
+    : `on ${SENDER_PHONE}`;
+}
+
+// Lucy's own templates, verbatim in structure (supplied 2026-07-25), with the
+// site specifics slotted in from our structured fields. Two scenarios: a site
+// that already HAS planning permission (status "decided") vs one still SEEKING it.
+// Deterministic on purpose — this is her voice, so no paraphrasing / no LLM.
+function buildApproachEmail(app: {
+  agentName: string | null;
+  units: number;
+  address: string;
+  council: string;
+  status: string;
+}): { subject: string; body: string } {
+  const hasPlanning = app.status === "decided";
+  const open = greeting(app.agentName);
+
+  if (hasPlanning) {
+    return {
+      subject: `Planning permission – ${app.address}`,
+      body: `${open}
+
+I hope you are well.
+
+I noticed from the planning register that you have received planning permission to construct ${unitPhrase(app.units)} at ${app.address}.
+
+Are you planning on selling the site or building it out yourself?
+
+If not, I have several clients who would be interested in buying the site. We specialise in finding off market sites for developers, builders and architects with or without planning permission. Our services are completely free as we are retained by our purchasers. Please see our website for a snapshot of our retained clients and recent work at ${IDEALLAND_WEBSITE}.
+
+It would be great to have a chat whenever is convenient for you, ${contactLine()}.
+
+Best wishes
+${SENDER_NAME}`,
+    };
+  }
+
+  return {
+    subject: `Your application at ${app.address}`,
+    body: `${open}
+
+I came across the application at ${app.address} for ${unitPhrase(app.units)}.
+
+I just wanted to ask — is your client planning to build it out, or would they consider a sale?
+
+We are currently working with a number of developers actively acquiring similar schemes in ${app.council} and are retained by them, so there's no fee to your client. We are also happy to discuss an introduction fee with you.
+
+Happy to have a quick chat if easier.
+
+Best wishes
+${SENDER_NAME}`,
+  };
+}
+
 export async function draftApproach(
   applicationId: string,
   options?: { force?: boolean }
@@ -172,54 +250,25 @@ export async function draftApproach(
   if (!options?.force && app.approachStatus && app.approachBody) {
     return { ok: true, reason: "Already drafted", subject: app.approachSubject ?? "", body: app.approachBody };
   }
-  if (!isClaudeConfigured()) return { ok: false, reason: "ANTHROPIC_API_KEY not configured" };
 
-  const recipient = app.agentName ?? app.agentFirm ?? "the agent";
-  const firstName = app.agentName ? app.agentName.split(" ")[0] : null;
-  const greetingRule = firstName
-    ? `Open the email "Dear ${firstName},".`
-    : `We do NOT know the recipient's name, so open with a neutral greeting like "Hello," — NEVER use a placeholder such as "[Recipient Name]", "[Name]" or brackets of any kind.`;
-
-  const prompt = `Write a short, professional approach email on behalf of IdealLand, a London property-sourcing firm that acts for developers seeking small residential development sites (1-9 units).
-
-Context: we saw a planning application this person (or their client) submitted, and we want to open a conversation about whether the site owner would consider SELLING the site to one of our developer clients. We are NOT selling anything and NOT offering services — we are a buyer's agent seeking off-market opportunities. Be warm, brief, and low-pressure. Do NOT invent facts, prices, or figures. Do NOT claim we already have a specific buyer lined up.
-
-Recipient: ${recipient}${app.agentFirm ? ` (${app.agentFirm})` : ""}
-The site:
-  Borough: ${app.council}
-  Address: ${app.address}
-  Proposed scheme: ${app.description}
-
-${greetingRule}
-
-Return ONLY JSON:
-{
-  "subject": "<short, specific subject line referencing the site/borough>",
-  "body": "<the email body, plain text, 90-130 words, ending with a soft question like whether the owner might be open to a conversation. Sign off as 'IdealLand'. Contains NO bracketed placeholders whatsoever.>"
-}`;
-
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const res = await withRetry(() =>
-    client.messages.create({
-      model: MODEL,
-      max_tokens: 600,
-      messages: [{ role: "user", content: prompt }],
-    })
-  );
-  const text = res.content.find((b): b is Anthropic.TextBlock => b.type === "text")?.text ?? "";
-  const parsed = parseJson<{ subject?: string; body?: string }>(text);
-  if (!parsed?.subject || !parsed?.body) return { ok: false, reason: "Draft failed" };
+  const { subject, body } = buildApproachEmail({
+    agentName: app.agentName,
+    units: app.units,
+    address: app.address,
+    council: app.council,
+    status: app.status,
+  });
 
   await prisma.planningApplication.update({
     where: { id: applicationId },
     data: {
-      approachSubject: parsed.subject.trim(),
-      approachBody: parsed.body.trim(),
+      approachSubject: subject,
+      approachBody: body,
       approachStatus: "drafted",
     },
   });
 
-  return { ok: true, subject: parsed.subject.trim(), body: parsed.body.trim() };
+  return { ok: true, subject, body };
 }
 
 // Run contact discovery across the best undone leads. Newest, highest-scored,
