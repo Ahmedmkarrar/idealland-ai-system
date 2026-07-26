@@ -276,25 +276,50 @@ export async function draftApproach(
 export async function bulkFindContacts(options?: {
   minScore?: number;
   limit?: number;
-}): Promise<{ processed: number; found: number; reason?: string }> {
-  if (!isClaudeConfigured()) return { processed: 0, found: 0, reason: "ANTHROPIC_API_KEY not configured" };
+  autoDraft?: boolean;
+}): Promise<{ processed: number; found: number; drafted: number; reason?: string }> {
+  if (!isClaudeConfigured()) return { processed: 0, found: 0, drafted: 0, reason: "ANTHROPIC_API_KEY not configured" };
 
   const minScore = options?.minScore ?? Number(process.env.CONTACT_MIN_LEAD_SCORE ?? 7);
-  const limit = Math.min(options?.limit ?? 5, 25);
+  const limit = Math.min(options?.limit ?? 5, 40);
+  const autoDraft = options?.autoDraft ?? false;
 
-  const candidates = await prisma.planningApplication.findMany({
-    where: { leadScore: { gte: minScore }, status: { not: "decided" }, contactStatus: null },
-    orderBy: [{ leadScore: "desc" }, { submittedAt: "desc" }],
+  const base = { leadScore: { gte: minScore }, status: { not: "decided" }, contactStatus: null } as const;
+  const order = [{ leadScore: "desc" as const }, { submittedAt: "desc" as const }];
+
+  // A council portal link is the finder's strongest signal (it confirms the
+  // application and often names the agent), so spend the budget on those leads
+  // first, then backfill with link-less leads to use any remaining slots.
+  const withUrl = await prisma.planningApplication.findMany({
+    where: { ...base, councilUrl: { not: null } },
+    orderBy: order,
     take: limit,
     select: { id: true },
   });
+  const remaining = limit - withUrl.length;
+  const withoutUrl = remaining > 0
+    ? await prisma.planningApplication.findMany({
+        where: { ...base, councilUrl: null },
+        orderBy: order,
+        take: remaining,
+        select: { id: true },
+      })
+    : [];
+  const candidates = [...withUrl, ...withoutUrl];
 
   let found = 0;
+  let drafted = 0;
   for (const c of candidates) {
     const r = await findAgentContact(c.id);
-    if (r.ok && r.result?.found) found++;
+    if (r.ok && r.result?.found) {
+      found++;
+      if (autoDraft) {
+        const d = await draftApproach(c.id);
+        if (d.ok) drafted++;
+      }
+    }
   }
-  return { processed: candidates.length, found };
+  return { processed: candidates.length, found, drafted };
 }
 
 const APPROACH_OUTCOMES = ["replied", "interested", "dead", "won"] as const;

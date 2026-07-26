@@ -9,6 +9,7 @@ interface Body {
   bulk?: boolean;
   minScore?: number;
   limit?: number;
+  autoDraft?: boolean;
 }
 
 export async function POST(request: NextRequest) {
@@ -21,6 +22,7 @@ export async function POST(request: NextRequest) {
     const result = await bulkFindContacts({
       minScore: typeof body.minScore === "number" ? body.minScore : undefined,
       limit: typeof body.limit === "number" ? body.limit : undefined,
+      autoDraft: body.autoDraft === true,
     });
     return NextResponse.json(result);
   }
