@@ -16,11 +16,13 @@ import {
   Menu,
   X,
   TrendingUp,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
+  { href: "/assistant", label: "Assistant", icon: Sparkles },
   { href: "/roi", label: "ROI", icon: TrendingUp },
   { href: "/sourcing", label: "Sourcing", icon: Building2 },
   { href: "/hmo", label: "HMO Acquisition", icon: Home },
