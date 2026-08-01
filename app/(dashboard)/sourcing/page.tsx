@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -239,6 +240,9 @@ export default function SourcingPage() {
     });
 
   const unanalyzedCount = applications.filter((a) => !a.intelligenceSummary || !a.leadScore).length;
+  const readyToSendCount = applications.filter(
+    (a) => a.contactStatus === "found" && a.approachBody && a.approachStatus !== "sent"
+  ).length;
 
   return (
     <div className="p-4 sm:p-8 space-y-6">
@@ -284,6 +288,23 @@ export default function SourcingPage() {
               Scan complete — found <strong>{lastScanResult.found}</strong> new applications,
               sent <strong>{lastScanResult.alerted}</strong> alerts
             </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* The researched leads are easy to lose among ~2,000 rows — send staff
+          straight to the queue that has a contact and a written email. */}
+      {readyToSendCount > 0 && (
+        <Card className="border-emerald-200 bg-emerald-50">
+          <CardContent className="py-3 flex flex-wrap items-center gap-3">
+            <Mail className="w-4 h-4 text-emerald-600 shrink-0" />
+            <p className="text-sm text-emerald-900 flex-1 min-w-[12rem]">
+              <strong>{readyToSendCount}</strong> approach{" "}
+              {readyToSendCount === 1 ? "pack is" : "packs are"} written and ready to send.
+            </p>
+            <Link href="/ready">
+              <Button size="sm">Go to Ready to Send</Button>
+            </Link>
           </CardContent>
         </Card>
       )}
@@ -417,10 +438,14 @@ export default function SourcingPage() {
                     {expandedAppId === app.id && (
                       <TableRow key={`${app.id}-history`}>
                         <TableCell colSpan={9} className="bg-muted/30 px-6 py-4">
-                          <div className="space-y-5">
+                          {/* The row spans all 9 columns, so this cell is as wide as the
+                              table — which is wider than the viewport. Left-pinning the
+                              panel and capping its width keeps the action buttons on
+                              screen instead of rendering them past the right edge. */}
+                          <div className="sticky left-0 max-w-[min(56rem,calc(100vw-4rem))] space-y-5">
                             {/* AI Intelligence Summary */}
                             <div>
-                              <div className="flex items-center justify-between mb-2">
+                              <div className="flex flex-wrap items-center gap-3 mb-2">
                                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
                                   <Sparkles className="w-3 h-3" />AI Intelligence
                                 </p>
@@ -461,7 +486,7 @@ export default function SourcingPage() {
 
                             {/* Approach Pack — find the agent + draft the seller approach */}
                             <div>
-                              <div className="flex items-center justify-between mb-2">
+                              <div className="flex flex-wrap items-center gap-3 mb-2">
                                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
                                   <Users className="w-3 h-3" />Approach Pack — reach the agent to ask about selling
                                 </p>
@@ -515,7 +540,7 @@ export default function SourcingPage() {
 
                                   {/* Seller-approach draft */}
                                   <div className="border-t pt-3">
-                                    <div className="flex items-center justify-between mb-2">
+                                    <div className="flex flex-wrap items-center gap-3 mb-2">
                                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Seller-approach email</p>
                                       <Button
                                         size="sm"

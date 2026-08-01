@@ -17,11 +17,13 @@ import {
   X,
   TrendingUp,
   Sparkles,
+  Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
+  { href: "/ready", label: "Ready to Send", icon: Send },
   { href: "/assistant", label: "Assistant", icon: Sparkles },
   { href: "/roi", label: "ROI", icon: TrendingUp },
   { href: "/sourcing", label: "Sourcing", icon: Building2 },

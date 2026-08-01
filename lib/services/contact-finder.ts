@@ -19,6 +19,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
+import { usableEmail } from "@/lib/email-address";
 
 const MODEL = "claude-haiku-4-5-20251001";
 
@@ -134,15 +135,28 @@ Return ONLY a JSON object, no prose:
   const clean = (v: unknown): string | null =>
     typeof v === "string" && v.trim() && v.trim().toLowerCase() !== "null" ? v.trim() : null;
 
+  const rawEmail = clean(parsed.agentEmail);
+  const { email: agentEmail, rejected: rejectedEmail } = usableEmail(rawEmail);
+
   const result: ContactResult = {
     agentName: clean(parsed.agentName),
     agentFirm: clean(parsed.agentFirm),
-    agentEmail: clean(parsed.agentEmail),
+    agentEmail,
     agentPhone: clean(parsed.agentPhone),
     agentWebsite: clean(parsed.agentWebsite),
     notes: clean(parsed.notes),
     found: false,
   };
+  // A guessed pattern isn't a contact — surface it as a lead to chase, never as a
+  // one-click send, or Lucy mails an address that bounces.
+  if (rejectedEmail) {
+    result.notes = [
+      result.notes,
+      `Unverified email pattern returned ("${rejectedEmail}") — not a confirmed address. Identify the individual before sending.`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
   // "Found" means we have something actionable to reach a human with.
   result.found = !!(result.agentEmail || result.agentName || result.agentFirm);
 
