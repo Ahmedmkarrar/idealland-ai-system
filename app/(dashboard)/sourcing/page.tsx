@@ -442,7 +442,7 @@ export default function SourcingPage() {
                               table — which is wider than the viewport. Left-pinning the
                               panel and capping its width keeps the action buttons on
                               screen instead of rendering them past the right edge. */}
-                          <div className="sticky left-0 max-w-[min(56rem,calc(100vw-4rem))] space-y-5">
+                          <div className="sticky left-0 max-w-[calc(100vw-4rem)] md:max-w-[min(56rem,calc(100vw-23rem))] space-y-5">
                             {/* AI Intelligence Summary */}
                             <div>
                               <div className="flex flex-wrap items-center gap-3 mb-2">
