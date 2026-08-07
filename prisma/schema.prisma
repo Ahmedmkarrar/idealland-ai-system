@@ -73,6 +73,12 @@ model PlanningApplication {
   units       Int
   status      String
   applicant   String?
+  // Council-owned sites are non-starters — IdealLand can't broker land the
+  // borough owns. Derived at ingest from PLD's ownership_status plus the
+  // applicant's name; see lib/public-ownership.ts.
+  ownershipStatus   String?
+  publicOwner       Boolean @default(false)
+  publicOwnerReason String?
   architect   String?
   submittedAt DateTime
   decidedAt   DateTime?

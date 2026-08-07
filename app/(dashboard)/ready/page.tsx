@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { isUsableEmail } from "@/lib/email-address";
 import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
+import { approachMailto, refreshGreeting } from "@/lib/approach-email";
 
 interface ReadyLead {
   id: string;
@@ -62,17 +63,6 @@ function googleSearchUrl(name: string | null, firm: string | null, council: stri
   return `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 }
 
-// Copies Lucy on every approach that goes out from here so she has a record of it.
-// NEXT_PUBLIC_IDEALLAND_APPROACH_CC overrides; set it empty to stop copying.
-function mailtoUrl(lead: ReadyLead): string {
-  const params = new URLSearchParams({
-    subject: lead.approachSubject ?? "",
-    body: lead.approachBody ?? "",
-  });
-  const cc = (process.env.NEXT_PUBLIC_IDEALLAND_APPROACH_CC ?? "admin@idealland.co.uk").trim();
-  if (cc) params.set("cc", cc);
-  return `mailto:${lead.agentEmail}?${params}`;
-}
 
 export default function ReadyToSendPage() {
   const [leads, setLeads] = useState<ReadyLead[]>([]);
@@ -110,7 +100,7 @@ export default function ReadyToSendPage() {
   };
 
   const handleCopy = async (lead: ReadyLead) => {
-    await navigator.clipboard.writeText(`${lead.approachSubject ?? ""}\n\n${lead.approachBody ?? ""}`);
+    await navigator.clipboard.writeText(`${lead.approachSubject ?? ""}\n\n${refreshGreeting(lead.approachBody)}`);
     setCopiedId(lead.id);
     setTimeout(() => setCopiedId(null), 2000);
   };
@@ -134,7 +124,7 @@ export default function ReadyToSendPage() {
     <div className="space-y-2">
       <p className="text-xs font-semibold">{lead.approachSubject}</p>
       <p className="text-sm whitespace-pre-wrap bg-muted/40 rounded p-3 leading-relaxed">
-        {lead.approachBody}
+        {refreshGreeting(lead.approachBody)}
       </p>
     </div>
   );
@@ -302,7 +292,7 @@ export default function ReadyToSendPage() {
                       </a>
                       {renderApproachEmail(lead)}
                       <div className="flex flex-wrap items-center gap-2 pt-1">
-                        <a href={mailtoUrl(lead)}>
+                        <a href={approachMailto(lead.agentEmail ?? "", lead.approachSubject, lead.approachBody)}>
                           <Button size="sm">
                             <Mail className="w-3.5 h-3.5 mr-1.5" />
                             Open in email

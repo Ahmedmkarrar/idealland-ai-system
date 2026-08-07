@@ -21,6 +21,7 @@ import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
 import { usableEmail } from "@/lib/email-address";
 import { councilReference } from "@/lib/planning-portals";
+import { timeGreeting } from "@/lib/approach-email";
 
 const MODEL = "claude-haiku-4-5-20251001";
 
@@ -189,35 +190,31 @@ Return ONLY a JSON object, no prose:
 // (see the mailto builders in the Sourcing and Ready pages) so she keeps a record
 // without being the name on the letter.
 //
-// ⚠️ IDEALLAND_SENDER_PHONE / _EMAIL are not yet set. Until they are, the letter
-// carries the known IdealLand line rather than a made-up number, and prints no
-// email address at all — a wrong reply-to on a cold approach loses the reply, and
-// a placeholder in a live client email is worse than an omission. Set these three
-// env vars to finish the switch:
-//   IDEALLAND_SENDER_NAME   e.g. "James Smith"
-//   IDEALLAND_SENDER_PHONE  his direct line
-//   IDEALLAND_SENDER_EMAIL  his address
+// The letter no longer prints a phone number: Lucy sends it from her own mailbox
+// and offers to set up the call, so there is nothing to publish for James in a
+// cold email. IDEALLAND_SENDER_NAME overrides the name in the sign-off.
 const SENDER_NAME = process.env.IDEALLAND_SENDER_NAME ?? "James";
-const SENDER_PHONE = process.env.IDEALLAND_SENDER_PHONE ?? "07973445901";
-const SENDER_EMAIL = process.env.IDEALLAND_SENDER_EMAIL ?? "";
 const IDEALLAND_WEBSITE = process.env.IDEALLAND_WEBSITE ?? "www.idealland.co.uk";
 
 // A first name is only safe as a greeting when it's a single clean person. Two
-// agents joined by "/" or a comma-separated list get a neutral "Hello,".
+// agents joined by "/" or a comma-separated list get the time-of-day greeting.
 function greeting(agentName: string | null): string {
-  if (!agentName || /[/,&]/.test(agentName)) return "Hello,";
+  if (!agentName || /[/,&]/.test(agentName)) return timeGreeting();
   const first = agentName.trim().split(/\s+/)[0];
-  return first ? `Dear ${first},` : "Hello,";
+  return first ? `Dear ${first},` : timeGreeting();
 }
 
 function unitPhrase(units: number): string {
   return `${units} residential ${units === 1 ? "unit" : "units"}`;
 }
 
-function contactLine(): string {
-  return SENDER_EMAIL
-    ? `on ${SENDER_PHONE} or by email ${SENDER_EMAIL}`
-    : `on ${SENDER_PHONE}`;
+/**
+ * Lucy's wording (2026-08-07). She sends the letter herself and books the call,
+ * so it offers to arrange one rather than printing a direct line — which also
+ * removes the need to publish a number for James in a cold email.
+ */
+function chatOffer(): string {
+  return `If you would prefer to have a chat please let me know and I will set up a phone call with ${SENDER_NAME}.`;
 }
 
 // Lucy's own templates, verbatim in structure (supplied 2026-07-25), with the
@@ -265,7 +262,7 @@ Are you planning on selling the site or building it out yourself?
 
 If not, I have several clients who would be interested in buying the site. We specialise in finding off market sites for developers, builders and architects with or without planning permission. Our services are completely free as we are retained by our purchasers. Please see our website for a snapshot of our retained clients and recent work at ${IDEALLAND_WEBSITE}.
 
-It would be great to have a chat whenever is convenient for you, ${contactLine()}.
+${chatOffer()}
 
 Best wishes
 ${SENDER_NAME}`,
@@ -282,7 +279,7 @@ I just wanted to ask — is your client planning to build it out, or would they 
 
 We are currently working with a number of developers actively acquiring similar schemes in ${app.council} and are retained by them, so there's no fee to your client. We are also happy to discuss an introduction fee with you.
 
-Happy to have a quick chat if easier.
+${chatOffer()}
 
 Best wishes
 ${SENDER_NAME}`,

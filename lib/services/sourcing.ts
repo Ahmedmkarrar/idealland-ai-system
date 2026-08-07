@@ -3,6 +3,7 @@ import { sendPlanningAlert } from "@/lib/services/email";
 import { sendTelegramAlert } from "@/lib/services/telegram";
 import { autoSendApplicationAlert } from "@/lib/services/mailing";
 import { cleanCouncilUrl, planIndexUrl, verifyMirrorUrl } from "@/lib/planning-portals";
+import { publicOwnerReason } from "@/lib/public-ownership";
 import { withRetry } from "@/lib/retry";
 
 // IdealLand's target band: 1-9 residential units. At 10+ units a scheme
@@ -60,6 +61,7 @@ interface ScrapedApplication {
   units: number; // structured proposed residential unit count from PLD
   submittedAt: Date;
   applicant?: string;
+  ownershipStatus?: string;
   councilUrl?: string;
   decidedAt?: Date;
   decision?: string; // "Approved" | "Refused" | "Withdrawn" | ...
@@ -84,6 +86,7 @@ interface PldSource {
   url_planning_app?: string | null;
   application_details?: {
     lead_developer_company_name?: string | null;
+    ownership_status?: string | null;
     residential_details?: {
       total_no_proposed_residential_units?: number | null;
       total_no_existing_residential_units?: number | null;
@@ -214,6 +217,7 @@ async function fetchFromPLD(opts?: {
     "id", "lpa_app_no", "borough", "lpa_name", "description",
     "decision", "decision_date", "status", "valid_date", "last_updated",
     "site_name", "site_number", "street_name", "secondary_street_name", "postcode",
+    "application_details.ownership_status",
     "url_planning_app",
     "application_details.lead_developer_company_name",
     PLD_PROPOSED_UNITS_FIELD,
@@ -280,6 +284,7 @@ async function fetchFromPLD(opts?: {
         submittedAt:
           parseUkDate(s.valid_date) ?? parseUkDate(s.last_updated) ?? new Date(),
         applicant: s.application_details?.lead_developer_company_name ?? undefined,
+        ownershipStatus: s.application_details?.ownership_status ?? undefined,
         councilUrl: absolutePldUrl(s.url_planning_app),
         decision: includeDecided ? s.decision?.trim() || undefined : undefined,
         decidedAt: includeDecided
@@ -362,6 +367,9 @@ export async function scanCouncils(opts?: {
           units: app.units,
           status: "submitted",
           applicant: app.applicant ?? null,
+          ownershipStatus: app.ownershipStatus ?? null,
+          publicOwner: publicOwnerReason(app) !== null,
+          publicOwnerReason: publicOwnerReason(app),
           councilUrl: app.councilUrl ?? null,
           lpaReference: app.lpaReference ?? null,
           // Only when the council gives us nothing of its own, and only after the
@@ -489,6 +497,9 @@ export async function scanHistoricalDecisions(lookbackDays = 365): Promise<{
           units: app.units,
           status: "decided",
           applicant: app.applicant ?? null,
+          ownershipStatus: app.ownershipStatus ?? null,
+          publicOwner: publicOwnerReason(app) !== null,
+          publicOwnerReason: publicOwnerReason(app),
           councilUrl: app.councilUrl ?? null,
           lpaReference: app.lpaReference ?? null,
           submittedAt: app.submittedAt,

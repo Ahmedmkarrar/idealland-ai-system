@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { RefreshCw, Search, ScanLine, Building2, MapPin, Calendar, ChevronDown, ChevronRight, Clock, CheckCircle, XCircle, AlertCircle, Sparkles, Send, Mail, Users, ExternalLink, Copy } from "lucide-react";
 import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
+import { approachMailto, refreshGreeting } from "@/lib/approach-email";
 
 interface PlanningApplication {
   id: string;
@@ -29,6 +30,8 @@ interface PlanningApplication {
   analyzedAt: string | null;
   councilUrl: string | null;
   mirrorUrl: string | null;
+  publicOwner: boolean;
+  publicOwnerReason: string | null;
   agentName: string | null;
   agentFirm: string | null;
   agentEmail: string | null;
@@ -60,15 +63,6 @@ function googleSearchUrl(name: string | null, firm: string | null, council: stri
   return `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 }
 
-// Opens the user's own mail client with the approach ready to send, copying Lucy
-// on every one so she has a record of anything that leaves the dashboard.
-// NEXT_PUBLIC_IDEALLAND_APPROACH_CC overrides; set it empty to stop copying.
-function approachMailto(to: string, subject: string | null, body: string | null): string {
-  const params = new URLSearchParams({ subject: subject ?? "", body: body ?? "" });
-  const cc = (process.env.NEXT_PUBLIC_IDEALLAND_APPROACH_CC ?? "admin@idealland.co.uk").trim();
-  if (cc) params.set("cc", cc);
-  return `mailto:${to}?${params}`;
-}
 
 interface StatusChange {
   id: string;
@@ -101,7 +95,8 @@ export default function SourcingPage() {
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
   const [generatingOutreachId, setGeneratingOutreachId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("submitted");
+  const [includePublic, setIncludePublic] = useState(false);
   const [sortBy, setSortBy] = useState("submitted");
   const [minScore, setMinScore] = useState(5);
   const [lastScanResult, setLastScanResult] = useState<{ found: number; alerted: number } | null>(null);
@@ -253,6 +248,9 @@ export default function SourcingPage() {
     // after a scan, so treating unscored as zero would make every freshly-found
     // site invisible for hours — exactly the ones worth seeing first.
     .filter((app) => (minScore === 0 || app.leadScore == null ? true : app.leadScore >= minScore))
+    // Council-owned land can't be brokered, so it's set aside rather than shown —
+    // the client asked for this directly ("they are non starters").
+    .filter((app) => includePublic || !app.publicOwner)
     .sort((a, b) => {
       if (sortBy === "score") {
         return (b.leadScore ?? -1) - (a.leadScore ?? -1);
@@ -267,6 +265,7 @@ export default function SourcingPage() {
     minScore === 0
       ? 0
       : applications.filter((a) => a.leadScore != null && a.leadScore < minScore).length;
+  const hiddenPublic = includePublic ? 0 : applications.filter((a) => a.publicOwner).length;
   const unanalyzedCount = applications.filter((a) => !a.intelligenceSummary || !a.leadScore).length;
   const readyToSendCount = applications.filter(
     (a) => a.contactStatus === "found" && a.approachBody && a.approachStatus !== "sent"
@@ -365,16 +364,17 @@ export default function SourcingPage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "all")}>
-              <SelectTrigger className="w-full sm:w-40">
-                <SelectValue placeholder="Filter status" />
+            {/* Half the database is decided applications kept for research. They are
+                not things to act on, so the working list defaults to live ones. The
+                old approved/refused/withdrawn options never matched a stored value. */}
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "submitted")}>
+              <SelectTrigger className="w-full sm:w-48">
+                <SelectValue placeholder="Which sites" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                <SelectItem value="submitted">Submitted</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="refused">Refused</SelectItem>
-                <SelectItem value="withdrawn">Withdrawn</SelectItem>
+                <SelectItem value="submitted">Live opportunities</SelectItem>
+                <SelectItem value="decided">Already decided</SelectItem>
+                <SelectItem value="all">Everything</SelectItem>
               </SelectContent>
             </Select>
             <Select value={String(minScore)} onValueChange={(v) => setMinScore(Number(v ?? 5))}>
@@ -400,10 +400,18 @@ export default function SourcingPage() {
               </SelectContent>
             </Select>
           </div>
-          {hiddenByScore > 0 && (
+          {(hiddenByScore > 0 || hiddenPublic > 0) && (
             <p className="text-xs text-muted-foreground mt-2">
-              Hiding {hiddenByScore.toLocaleString()} lead{hiddenByScore === 1 ? "" : "s"} scoring below {minScore}.{" "}
-              <button onClick={() => setMinScore(0)} className="text-blue-600 hover:underline">Show everything</button>
+              Showing <strong>{filtered.length.toLocaleString()}</strong> of {applications.length.toLocaleString()} —
+              {hiddenByScore > 0 && <> {hiddenByScore.toLocaleString()} scoring below {minScore}</>}
+              {hiddenByScore > 0 && hiddenPublic > 0 && " and"}
+              {hiddenPublic > 0 && (
+                <> {hiddenPublic.toLocaleString()} council-owned</>
+              )}{" "}
+              set aside.{" "}
+              <button onClick={() => { setMinScore(0); setIncludePublic(true); }} className="text-blue-600 hover:underline">
+                Show everything
+              </button>
             </p>
           )}
         </CardHeader>
@@ -685,9 +693,9 @@ export default function SourcingPage() {
                                     {app.approachBody ? (
                                       <div className="space-y-2">
                                         <p className="text-xs font-semibold">{app.approachSubject}</p>
-                                        <p className="text-sm whitespace-pre-wrap bg-muted/40 rounded p-2">{app.approachBody}</p>
+                                        <p className="text-sm whitespace-pre-wrap bg-muted/40 rounded p-2">{refreshGreeting(app.approachBody)}</p>
                                         <div className="flex flex-wrap gap-2">
-                                          <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={() => navigator.clipboard.writeText(`${app.approachSubject}\n\n${app.approachBody}`)}>Copy</Button>
+                                          <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={() => navigator.clipboard.writeText(`${app.approachSubject}\n\n${refreshGreeting(app.approachBody)}`)}>Copy</Button>
                                           {app.agentEmail && (
                                             <a href={approachMailto(app.agentEmail, app.approachSubject, app.approachBody)}>
                                               <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs">Open in email</Button>
