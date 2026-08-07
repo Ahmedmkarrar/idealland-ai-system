@@ -8,11 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { RefreshCw, Search, ScanLine, Building2, MapPin, Calendar, ChevronDown, ChevronRight, Clock, CheckCircle, XCircle, AlertCircle, Sparkles, Send, Mail, Users } from "lucide-react";
+import { RefreshCw, Search, ScanLine, Building2, MapPin, Calendar, ChevronDown, ChevronRight, Clock, CheckCircle, XCircle, AlertCircle, Sparkles, Send, Mail, Users, ExternalLink, Copy } from "lucide-react";
+import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
 
 interface PlanningApplication {
   id: string;
   reference: string;
+  lpaReference: string | null;
   council: string;
   address: string;
   description: string;
@@ -26,6 +28,7 @@ interface PlanningApplication {
   leadScoreReason: string | null;
   analyzedAt: string | null;
   councilUrl: string | null;
+  mirrorUrl: string | null;
   agentName: string | null;
   agentFirm: string | null;
   agentEmail: string | null;
@@ -55,6 +58,16 @@ function linkedinSearchUrl(name: string | null, firm: string | null): string {
 function googleSearchUrl(name: string | null, firm: string | null, council: string): string {
   const q = [name, firm, name || firm ? "" : `${council} planning agent`, "contact email"].filter(Boolean).join(" ");
   return `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+}
+
+// Opens the user's own mail client with the approach ready to send, copying Lucy
+// on every one so she has a record of anything that leaves the dashboard.
+// NEXT_PUBLIC_IDEALLAND_APPROACH_CC overrides; set it empty to stop copying.
+function approachMailto(to: string, subject: string | null, body: string | null): string {
+  const params = new URLSearchParams({ subject: subject ?? "", body: body ?? "" });
+  const cc = (process.env.NEXT_PUBLIC_IDEALLAND_APPROACH_CC ?? "admin@idealland.co.uk").trim();
+  if (cc) params.set("cc", cc);
+  return `mailto:${to}?${params}`;
 }
 
 interface StatusChange {
@@ -90,8 +103,10 @@ export default function SourcingPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("submitted");
+  const [minScore, setMinScore] = useState(5);
   const [lastScanResult, setLastScanResult] = useState<{ found: number; alerted: number } | null>(null);
   const [expandedAppId, setExpandedAppId] = useState<string | null>(null);
+  const [copiedRefId, setCopiedRefId] = useState<string | null>(null);
   const [statusHistories, setStatusHistories] = useState<Record<string, StatusChange[]>>({});
 
   const fetchApplications = useCallback(async () => {
@@ -226,9 +241,18 @@ export default function SourcingPage() {
       searchQuery
         ? app.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
           app.council.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          app.reference.toLowerCase().includes(searchQuery.toLowerCase())
+          app.reference.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (app.lpaReference?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false)
         : true
     )
+    // Half the pipeline scores 4 or below — schemes the client would never chase.
+    // Hiding them by default is the difference between a list you scan and a list
+    // you give up on; the control below reopens them whenever they're wanted.
+    //
+    // A lead with NO score yet is never hidden. Scoring happens on the cron run
+    // after a scan, so treating unscored as zero would make every freshly-found
+    // site invisible for hours — exactly the ones worth seeing first.
+    .filter((app) => (minScore === 0 || app.leadScore == null ? true : app.leadScore >= minScore))
     .sort((a, b) => {
       if (sortBy === "score") {
         return (b.leadScore ?? -1) - (a.leadScore ?? -1);
@@ -239,6 +263,10 @@ export default function SourcingPage() {
       return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
     });
 
+  const hiddenByScore =
+    minScore === 0
+      ? 0
+      : applications.filter((a) => a.leadScore != null && a.leadScore < minScore).length;
   const unanalyzedCount = applications.filter((a) => !a.intelligenceSummary || !a.leadScore).length;
   const readyToSendCount = applications.filter(
     (a) => a.contactStatus === "found" && a.approachBody && a.approachStatus !== "sent"
@@ -349,6 +377,18 @@ export default function SourcingPage() {
                 <SelectItem value="withdrawn">Withdrawn</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={String(minScore)} onValueChange={(v) => setMinScore(Number(v ?? 5))}>
+              <SelectTrigger className="w-full sm:w-44">
+                <SelectValue placeholder="Minimum score" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="8">Score 8+ (best only)</SelectItem>
+                <SelectItem value="7">Score 7+</SelectItem>
+                <SelectItem value="6">Score 6+</SelectItem>
+                <SelectItem value="5">Score 5+ (default)</SelectItem>
+                <SelectItem value="0">Show everything</SelectItem>
+              </SelectContent>
+            </Select>
             <Select value={sortBy} onValueChange={(v) => setSortBy(v ?? "submitted")}>
               <SelectTrigger className="w-full sm:w-36">
                 <SelectValue placeholder="Sort by" />
@@ -360,6 +400,12 @@ export default function SourcingPage() {
               </SelectContent>
             </Select>
           </div>
+          {hiddenByScore > 0 && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Hiding {hiddenByScore.toLocaleString()} lead{hiddenByScore === 1 ? "" : "s"} scoring below {minScore}.{" "}
+              <button onClick={() => setMinScore(0)} className="text-blue-600 hover:underline">Show everything</button>
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -384,7 +430,10 @@ export default function SourcingPage() {
                   <TableHead className="text-right">Units</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Submitted</TableHead>
-                  <TableHead>Docs</TableHead>
+                  {/* Replaced the document count, which only ever counted placeholder
+                      rows. Whether a lead has a reachable contact is the thing worth
+                      seeing without opening every row. */}
+                  <TableHead>Contact</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -408,7 +457,9 @@ export default function SourcingPage() {
                           {app.leadScore ?? "—"}
                         </span>
                       </TableCell>
-                      <TableCell className="font-mono text-xs">{app.reference}</TableCell>
+                      {/* Show the council's own reference — our internal document id
+                          ("Croydon-26_01804_FUL") means nothing in a planning search. */}
+                      <TableCell className="font-mono text-xs">{councilReference(app) ?? app.reference}</TableCell>
                       <TableCell>
                         <div className="flex items-start gap-1.5">
                           <MapPin className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
@@ -428,10 +479,18 @@ export default function SourcingPage() {
                           {new Date(app.submittedAt).toLocaleDateString("en-GB")}
                         </div>
                       </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary" className="text-xs">
-                          {app.documents.length}
-                        </Badge>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {app.contactStatus === "found" ? (
+                          <span className="text-emerald-700 font-medium" title={app.agentEmail ?? app.agentFirm ?? "Contact found"}>
+                            {app.agentEmail ? "✓ email" : "✓ named"}
+                          </span>
+                        ) : app.contactStatus === "researching" ? (
+                          <span className="text-muted-foreground">searching…</span>
+                        ) : app.contactStatus === "not_found" ? (
+                          <span className="text-muted-foreground">none found</span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                     </TableRow>
 
@@ -442,7 +501,51 @@ export default function SourcingPage() {
                               table — which is wider than the viewport. Left-pinning the
                               panel and capping its width keeps the action buttons on
                               screen instead of rendering them past the right edge. */}
-                          <div className="sticky left-0 max-w-[calc(100vw-4rem)] md:max-w-[min(56rem,calc(100vw-23rem))] space-y-5">
+                          {/* whitespace-normal is load-bearing: TableCell sets
+                              whitespace-nowrap for the table's own rows, and this panel
+                              lives inside one — without the override the AI brief and
+                              contact notes run straight off the right-hand edge instead
+                              of wrapping. */}
+                          <div className="sticky left-0 max-w-[calc(100vw-4rem)] md:max-w-[min(56rem,calc(100vw-23rem))] space-y-5 whitespace-normal">
+                            {/* Straight through to the council's own page. This is the
+                                first thing anyone wants when they open a lead, so it is
+                                never gated behind Find contact, and it always renders —
+                                planningApplicationLink falls back to a portal search or
+                                a web search when the GLA feed gives us no direct link. */}
+                            {(() => {
+                              const link = planningApplicationLink(app);
+                              const ref = councilReference(app);
+                              return (
+                                <div className="bg-white border rounded-lg p-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+                                  <a href={link.url} target="_blank" rel="noreferrer">
+                                    <Button size="sm" className="h-8 px-3 text-xs">
+                                      <ExternalLink className="w-3.5 h-3.5 mr-1.5" />{link.label}
+                                    </Button>
+                                  </a>
+                                  {mapUrl(app.address, app.council) && (
+                                    <a href={mapUrl(app.address, app.council)!} target="_blank" rel="noreferrer">
+                                      <Button size="sm" variant="outline" className="h-8 px-3 text-xs">
+                                        <MapPin className="w-3.5 h-3.5 mr-1.5" />See the property
+                                      </Button>
+                                    </a>
+                                  )}
+                                  {ref && (
+                                    <div className="flex items-center gap-1.5 text-xs">
+                                      <span className="text-muted-foreground">Council ref:</span>
+                                      <code className="font-mono font-medium bg-muted px-1.5 py-0.5 rounded">{ref}</code>
+                                      <button
+                                        onClick={() => { navigator.clipboard.writeText(ref); setCopiedRefId(app.id); }}
+                                        className="text-blue-600 hover:underline inline-flex items-center gap-1"
+                                      >
+                                        <Copy className="w-3 h-3" />{copiedRefId === app.id ? "Copied" : "Copy"}
+                                      </button>
+                                    </div>
+                                  )}
+                                  <p className="text-xs text-muted-foreground basis-full">{link.hint}</p>
+                                </div>
+                              );
+                            })()}
+
                             {/* AI Intelligence Summary */}
                             <div>
                               <div className="flex flex-wrap items-center gap-3 mb-2">
@@ -503,17 +606,43 @@ export default function SourcingPage() {
                                 </Button>
                               </div>
 
+                              {/* Never a dead end. Before research has run there is still
+                                  something to work with — the developer named in the feed,
+                                  and the same lookup links the researched leads get — so
+                                  opening any lead gives somewhere to start rather than an
+                                  instruction to press a button and wait. */}
                               {!app.contactStatus && (
-                                <p className="text-sm text-muted-foreground italic">
-                                  Click <strong>Find contact</strong> — AI reads the council page + searches the web for the agent/architect who filed this and their contact details.
-                                </p>
+                                <div className="bg-white border rounded-lg p-3 space-y-2.5">
+                                  {app.applicant ? (
+                                    <p className="text-sm">
+                                      <span className="text-muted-foreground">Applicant named on the application:</span>{" "}
+                                      <span className="font-medium">{app.applicant}</span>
+                                    </p>
+                                  ) : (
+                                    <p className="text-sm text-muted-foreground">
+                                      The planning feed doesn&apos;t name the applicant for this one — the agent&apos;s
+                                      details are on the council&apos;s page, linked above.
+                                    </p>
+                                  )}
+                                  <p className="text-xs text-muted-foreground">
+                                    Not researched yet. <strong>Find contact</strong> reads the council page and searches
+                                    the web for the agent who filed it. The top-scoring leads are researched automatically
+                                    every morning — or start here:
+                                  </p>
+                                  <div className="flex flex-wrap gap-2 text-xs">
+                                    <a href={googleSearchUrl(null, app.applicant, app.council)} target="_blank" rel="noreferrer" className="px-2 py-1 rounded border text-blue-600 hover:bg-blue-50">Google search ↗</a>
+                                    <a href={linkedinSearchUrl(null, app.applicant)} target="_blank" rel="noreferrer" className="px-2 py-1 rounded border text-blue-600 hover:bg-blue-50">LinkedIn search ↗</a>
+                                  </div>
+                                </div>
                               )}
 
                               {app.contactStatus && (
                                 <div className="bg-white border rounded-lg p-3 space-y-3">
                                   <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
                                     <div><span className="text-muted-foreground">Agent:</span> <span className="font-medium">{app.agentName ?? "—"}</span></div>
-                                    <div><span className="text-muted-foreground">Firm:</span> <span className="font-medium">{app.agentFirm ?? "—"}</span></div>
+                                    {/* Falls back to the developer named in the planning feed
+                                        so the row is never blank when research came up short. */}
+                                    <div><span className="text-muted-foreground">Firm:</span> <span className="font-medium">{app.agentFirm ?? app.applicant ?? "—"}</span></div>
                                     <div>
                                       <span className="text-muted-foreground">Email:</span>{" "}
                                       {app.agentEmail
@@ -529,9 +658,8 @@ export default function SourcingPage() {
                                     )}
                                     <a href={linkedinSearchUrl(app.agentName, app.agentFirm)} target="_blank" rel="noreferrer" className="px-2 py-1 rounded border text-blue-600 hover:bg-blue-50">LinkedIn search ↗</a>
                                     <a href={googleSearchUrl(app.agentName, app.agentFirm, app.council)} target="_blank" rel="noreferrer" className="px-2 py-1 rounded border text-blue-600 hover:bg-blue-50">Google search ↗</a>
-                                    {app.councilUrl && (
-                                      <a href={app.councilUrl} target="_blank" rel="noreferrer" className="px-2 py-1 rounded border text-blue-600 hover:bg-blue-50">Council page ↗</a>
-                                    )}
+                                    {/* The council page link lives at the top of the panel now — it's
+                                        needed long before anyone clicks Find contact. */}
                                   </div>
 
                                   {app.contactNotes && (
@@ -561,7 +689,7 @@ export default function SourcingPage() {
                                         <div className="flex flex-wrap gap-2">
                                           <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={() => navigator.clipboard.writeText(`${app.approachSubject}\n\n${app.approachBody}`)}>Copy</Button>
                                           {app.agentEmail && (
-                                            <a href={`mailto:${app.agentEmail}?subject=${encodeURIComponent(app.approachSubject ?? "")}&body=${encodeURIComponent(app.approachBody ?? "")}`}>
+                                            <a href={approachMailto(app.agentEmail, app.approachSubject, app.approachBody)}>
                                               <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs">Open in email</Button>
                                             </a>
                                           )}

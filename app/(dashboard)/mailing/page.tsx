@@ -45,13 +45,16 @@ interface OutreachEmail {
   sentAt: string | null;
   errorMessage: string | null;
   createdAt: string;
+  // Nullable on purpose — SQLite has foreign keys off, so a deleted application
+  // leaves its outreach drafts pointing at nothing.
   application: {
     id: string;
     reference: string;
+    lpaReference: string | null;
     council: string;
     address: string;
     units: number;
-  };
+  } | null;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -244,6 +247,10 @@ export default function MailingPage() {
             </Card>
           ) : (
             Object.entries(outreachByApp).map(([appId, emails]) => {
+              // The parent site can be missing: SQLite runs with foreign keys off, so
+              // Prisma's onDelete: Cascade never fires and deleting an application
+              // leaves its drafts behind. Reading through the null relation took the
+              // whole page down, so fall back to placeholders.
               const app = emails[0].application;
               const pending = emails.filter((e) => e.status === "draft").length;
               const sent = emails.filter((e) => e.status === "sent").length;
@@ -252,9 +259,9 @@ export default function MailingPage() {
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <CardTitle className="text-base">{app.address}</CardTitle>
+                        <CardTitle className="text-base">{app?.address ?? "Site no longer in the list"}</CardTitle>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {app.council} · {app.units} units · {app.reference}
+                          {app ? `${app.council} · ${app.units} units · ${app.lpaReference ?? app.reference}` : "This draft's planning application has been removed"}
                         </p>
                       </div>
                       <div className="flex gap-2 text-xs">

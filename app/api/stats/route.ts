@@ -14,6 +14,9 @@ export async function GET() {
     totalContacts,
     sentMailCampaigns,
     recentRuns,
+    primeLeads,
+    readyToSend,
+    approachesSent,
   ] = await Promise.all([
     prisma.planningApplication.count(),
     prisma.planningApplication.count({ where: { status: "approved" } }),
@@ -29,10 +32,18 @@ export async function GET() {
       orderBy: { startedAt: "desc" },
       take: 10,
     }),
+    prisma.planningApplication.count({ where: { leadScore: { gte: 8 } } }),
+    // A lead is "ready" once it has a named contact and a written approach email
+    // and nobody has sent it yet — this is the queue on the /ready page.
+    prisma.planningApplication.count({
+      where: { contactStatus: "found", approachBody: { not: null }, approachStatus: { not: "sent" } },
+    }),
+    prisma.planningApplication.count({ where: { approachStatus: "sent" } }),
   ]);
 
   return NextResponse.json({
-    sourcing: { totalApplications, approvedApplications, pendingApplications },
+    sourcing: { totalApplications, approvedApplications, pendingApplications, primeLeads },
+    outreach: { readyToSend, approachesSent },
     documents: { totalDocuments, retrievedDocuments, pendingDocuments: totalDocuments - retrievedDocuments },
     social: { totalPosts, publishedPosts, scheduledPosts },
     mailing: { totalContacts, sentMailCampaigns },

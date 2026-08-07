@@ -76,6 +76,11 @@ model PlanningApplication {
   architect   String?
   submittedAt DateTime
   decidedAt   DateTime?
+  // What the council actually decided ("Approved", "Refused", "Withdrawn", ...).
+  // status="decided" only means a decision exists — about a quarter of them are
+  // refusals, and the approach letter must not congratulate those on a permission
+  // they did not get. From the PLD `decision` field.
+  decision    String?
   alertSent   Boolean  @default(false)
   decisionAlertSent Boolean @default(false)
   // AI analysis (filled in by lib/services/intelligence.ts).
@@ -86,6 +91,15 @@ model PlanningApplication {
   // Link back to the council's own planning-portal page (from PLD url_planning_app).
   // The agent/applicant identity lives there, not in the GLA feed.
   councilUrl          String?
+  // The council's OWN reference ("26/01804/FUL", from PLD lpa_app_no). `reference`
+  // above is the GLA document id, which no council portal recognises — this is
+  // the one to type into a planning search, and the feed carries it for every
+  // application even when it gives us no link. See lib/planning-portals.ts.
+  lpaReference        String?
+  // Verified deep link to a planning-register mirror (PlanIndex), for the ~30% of
+  // applications whose council publishes no direct link of its own. Written only
+  // after a request confirms the page exists — see lib/planning-portals.ts.
+  mirrorUrl           String?
   // Contact discovery — who filed the application and how to reach them. This is
   // the labour-intensive step (agent name + firm + email) IdealLand does by hand.
   agentName           String?

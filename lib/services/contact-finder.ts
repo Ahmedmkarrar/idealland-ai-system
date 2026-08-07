@@ -20,6 +20,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
 import { usableEmail } from "@/lib/email-address";
+import { councilReference } from "@/lib/planning-portals";
 
 const MODEL = "claude-haiku-4-5-20251001";
 
@@ -93,6 +94,11 @@ export async function findAgentContact(
 
   const councilLine = app.councilUrl ? `\n  Council application page: ${app.councilUrl}` : "";
   const applicantLine = app.applicant ? `\n  Applicant/developer named in the feed: ${app.applicant}` : "";
+  // The council's own reference is the one that appears on the planning portal and
+  // in the application documents, so it's the one a web search can actually hit.
+  // `app.reference` is a GLA document id that exists nowhere outside our database —
+  // searching for it returns nothing, which quietly cost us hit rate.
+  const searchableRef = councilReference(app) ?? app.reference;
 
   const prompt = `You are a UK property-sourcing researcher for IdealLand. We have found a London planning application and need to contact the AGENT who submitted it (usually the architect or planning consultant; sometimes the owner directly) to ask whether the owner would sell the site.
 
@@ -100,7 +106,7 @@ Find the agent/architect/planning consultant behind this application and their f
 
 Planning application:
   Council: ${app.council}
-  Reference: ${app.reference}
+  Council reference: ${searchableRef}
   Address: ${app.address}
   Description: ${app.description}${applicantLine}${councilLine}
 
@@ -177,13 +183,23 @@ Return ONLY a JSON object, no prose:
   return { ok: true, result };
 }
 
-// IdealLand's outbound identity in the seller-approach email. Env-overridable so
-// a different team member can send under their own name/number. Lucy James is the
-// primary sourcer; 07973445901 is her line (supplied 2026-07-25). Email is omitted
-// from the sign-off unless IDEALLAND_CONTACT_EMAIL is set — we never guess it.
-const SENDER_NAME = process.env.IDEALLAND_CONTACT_NAME ?? "Lucy James";
-const SENDER_PHONE = process.env.IDEALLAND_CONTACT_PHONE ?? "07973445901";
-const SENDER_EMAIL = process.env.IDEALLAND_CONTACT_EMAIL ?? "";
+// IdealLand's outbound identity in the seller-approach email.
+//
+// Approaches go out signed by James, at Lucy's request — she is cc'd on every one
+// (see the mailto builders in the Sourcing and Ready pages) so she keeps a record
+// without being the name on the letter.
+//
+// ⚠️ IDEALLAND_SENDER_PHONE / _EMAIL are not yet set. Until they are, the letter
+// carries the known IdealLand line rather than a made-up number, and prints no
+// email address at all — a wrong reply-to on a cold approach loses the reply, and
+// a placeholder in a live client email is worse than an omission. Set these three
+// env vars to finish the switch:
+//   IDEALLAND_SENDER_NAME   e.g. "James Smith"
+//   IDEALLAND_SENDER_PHONE  his direct line
+//   IDEALLAND_SENDER_EMAIL  his address
+const SENDER_NAME = process.env.IDEALLAND_SENDER_NAME ?? "James";
+const SENDER_PHONE = process.env.IDEALLAND_SENDER_PHONE ?? "07973445901";
+const SENDER_EMAIL = process.env.IDEALLAND_SENDER_EMAIL ?? "";
 const IDEALLAND_WEBSITE = process.env.IDEALLAND_WEBSITE ?? "www.idealland.co.uk";
 
 // A first name is only safe as a greeting when it's a single clean person. Two
@@ -208,14 +224,32 @@ function contactLine(): string {
 // site specifics slotted in from our structured fields. Two scenarios: a site
 // that already HAS planning permission (status "decided") vs one still SEEKING it.
 // Deterministic on purpose — this is her voice, so no paraphrasing / no LLM.
+/**
+ * Only an explicit grant earns the "you have received planning permission" letter.
+ *
+ * `status === "decided"` means the council reached a decision, not that it said
+ * yes — about a quarter of decided applications in the London feed are refusals,
+ * with withdrawals and lapses beyond that. Congratulating an agent on a permission
+ * their client was refused is the kind of mistake that ends the conversation, so
+ * anything that isn't a clear approval gets the neutral letter instead. A refused
+ * applicant is often the more willing seller anyway.
+ */
+function isApproval(decision: string | null | undefined): boolean {
+  if (!decision) return false;
+  const d = decision.trim().toLowerCase();
+  if (/refus|reject|withdraw|lapsed|declined|closed|not required/.test(d)) return false;
+  return /approv|grant|permit|consent|allowed/.test(d);
+}
+
 function buildApproachEmail(app: {
   agentName: string | null;
   units: number;
   address: string;
   council: string;
   status: string;
+  decision: string | null;
 }): { subject: string; body: string } {
-  const hasPlanning = app.status === "decided";
+  const hasPlanning = app.status === "decided" && isApproval(app.decision);
   const open = greeting(app.agentName);
 
   if (hasPlanning) {
@@ -271,6 +305,7 @@ export async function draftApproach(
     address: app.address,
     council: app.council,
     status: app.status,
+    decision: app.decision,
   });
 
   await prisma.planningApplication.update({

@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Building2,
-  FileText,
   Megaphone,
   Mail,
   RefreshCw,
@@ -19,6 +18,7 @@ import {
   Activity,
   Database,
   Zap,
+  Send,
 } from "lucide-react";
 
 interface ConfigStatus {
@@ -32,7 +32,8 @@ interface ConfigStatus {
 }
 
 interface Stats {
-  sourcing: { totalApplications: number; approvedApplications: number; pendingApplications: number };
+  sourcing: { totalApplications: number; approvedApplications: number; pendingApplications: number; primeLeads: number };
+  outreach: { readyToSend: number; approachesSent: number };
   documents: { totalDocuments: number; retrievedDocuments: number; pendingDocuments: number };
   social: { totalPosts: number; publishedPosts: number; scheduledPosts: number };
   mailing: { totalContacts: number; sentMailCampaigns: number };
@@ -86,12 +87,26 @@ function nextCronRelative(): string {
   return `in ${Math.floor(diffMin / 60)}h ${diffMin % 60}m`;
 }
 
+// Named for what they do for the business, not for the service that runs them —
+// "Document Retrieval" meant nothing to the people reading this feed.
 const RUN_TYPE_LABELS: Record<string, string> = {
-  sourcing: "Sourcing Scan",
-  decisions: "Decision Check",
-  documents: "Document Retrieval",
-  social: "Social Content",
-  mailing: "Mailing",
+  sourcing: "Looked for new sites",
+  decisions: "Checked for planning decisions",
+  documents: "Fetched Land Registry documents",
+  social: "Drafted social content",
+  mailing: "Sent mailing campaign",
+  outreach: "Drafted approach emails",
+  "decisions-backfill": "Backfilled past decisions",
+  "hmo-ingest": "Updated the HMO register",
+  invoicing: "Generated invoices",
+  ads: "Updated ad campaigns",
+};
+
+// What each run type is actually for, shown under the feed so nobody has to ask.
+const RUN_TYPE_EXPLAINER: Record<string, string> = {
+  sourcing: "Pulls new 1-9 unit planning applications from the London-wide feed every 4 hours.",
+  decisions: "Re-checks sites already in the list to see if the council has decided them.",
+  documents: "Looks up Land Registry title documents for a site. Needs an HMLR key — off until one is added.",
 };
 
 const STATUS_ICON = {
@@ -164,7 +179,7 @@ export default function OverviewPage() {
         alert(
           `Scan complete.\n` +
           `Sourcing: ${found} new ${found === 1 ? "opportunity" : "opportunities"} across ${s.boroughsWithMatches ?? 0} borough(s).\n` +
-          `See Recent Automation Runs below for full details.`
+          `See "What the system has been doing" below for full details.`
         );
       }
     }
@@ -193,11 +208,14 @@ export default function OverviewPage() {
       color: "text-blue-600",
       bg: "bg-blue-50",
     },
+    // Was "Documents Retrieved", which counted placeholder rows the system can't
+    // fetch without an HMLR key. This tile answers the question actually being
+    // asked at a glance: how many approaches are waiting to go out?
     {
-      title: "Documents Retrieved",
-      icon: FileText,
-      value: stats.documents.retrievedDocuments,
-      sub: `${stats.documents.pendingDocuments} pending`,
+      title: "Ready to Send",
+      icon: Send,
+      value: stats.outreach.readyToSend,
+      sub: `${stats.outreach.approachesSent} sent so far`,
       color: "text-purple-600",
       bg: "bg-purple-50",
     },
@@ -225,7 +243,7 @@ export default function OverviewPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Automation Overview</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            4 automations running for IdealLand (Sourcing · Documents · Social · Mailing)
+            Finding 1–9 unit residential sites across all 33 London boroughs, every 4 hours
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -370,7 +388,11 @@ export default function OverviewPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Recent Automation Runs</CardTitle>
+            <CardTitle className="text-base">What the system has been doing</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              A log of the automatic jobs that keep the site list current. Nothing here needs
+              action from you — it&apos;s here so you can see the system is running.
+            </p>
           </CardHeader>
           <CardContent>
             {stats.recentRuns.length === 0 ? (
@@ -394,9 +416,11 @@ export default function OverviewPage() {
                           {run.status}
                         </Badge>
                       </div>
-                      {run.summary && (
+                      {run.summary ? (
                         <p className="text-xs text-muted-foreground mt-0.5 truncate">{run.summary}</p>
-                      )}
+                      ) : RUN_TYPE_EXPLAINER[run.type] ? (
+                        <p className="text-xs text-muted-foreground mt-0.5 truncate">{RUN_TYPE_EXPLAINER[run.type]}</p>
+                      ) : null}
                       <p className="text-xs text-muted-foreground mt-0.5">
                         {new Date(run.startedAt).toLocaleString()}
                       </p>
@@ -415,7 +439,9 @@ export default function OverviewPage() {
           <CardContent className="space-y-2">
             {[
               { label: "Scan councils for new applications", endpoint: "/api/sourcing", icon: Building2 },
-              { label: "Retrieve pending documents", endpoint: "/api/documents", icon: FileText },
+              // "Retrieve pending documents" removed: Land Registry retrieval is off
+              // without an HMLR key, so the button did nothing and contradicted the
+              // Documents page, which tells the client there is nothing to action.
               { label: "Generate social content", endpoint: "/api/social", icon: Megaphone },
               { label: "Send outreach mail", endpoint: "/api/mailing", icon: Mail },
             ].map(({ label, endpoint, icon: Icon }) => (

@@ -15,16 +15,19 @@ import {
   AlertTriangle, Send, Inbox,
 } from "lucide-react";
 import { isUsableEmail } from "@/lib/email-address";
+import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
 
 interface ReadyLead {
   id: string;
   reference: string;
+  lpaReference: string | null;
   council: string;
   address: string;
   units: number;
   status: string;
   leadScore: number | null;
   councilUrl: string | null;
+  mirrorUrl: string | null;
   agentName: string | null;
   agentFirm: string | null;
   agentEmail: string | null;
@@ -59,10 +62,16 @@ function googleSearchUrl(name: string | null, firm: string | null, council: stri
   return `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 }
 
+// Copies Lucy on every approach that goes out from here so she has a record of it.
+// NEXT_PUBLIC_IDEALLAND_APPROACH_CC overrides; set it empty to stop copying.
 function mailtoUrl(lead: ReadyLead): string {
-  const subject = encodeURIComponent(lead.approachSubject ?? "");
-  const body = encodeURIComponent(lead.approachBody ?? "");
-  return `mailto:${lead.agentEmail}?subject=${subject}&body=${body}`;
+  const params = new URLSearchParams({
+    subject: lead.approachSubject ?? "",
+    body: lead.approachBody ?? "",
+  });
+  const cc = (process.env.NEXT_PUBLIC_IDEALLAND_APPROACH_CC ?? "admin@idealland.co.uk").trim();
+  if (cc) params.set("cc", cc);
+  return `mailto:${lead.agentEmail}?${params}`;
 }
 
 export default function ReadyToSendPage() {
@@ -145,7 +154,9 @@ export default function ReadyToSendPage() {
         </p>
         <p className="text-xs text-muted-foreground mt-0.5">
           {lead.council} · {lead.units} unit{lead.units === 1 ? "" : "s"} · {lead.status} ·{" "}
-          <span className="font-mono">{lead.reference}</span>
+          {/* The council's own ref, not our internal document id — this is the one
+              that works in a planning search. */}
+          <span className="font-mono">{councilReference(lead) ?? lead.reference}</span>
         </p>
       </div>
     </div>
@@ -189,14 +200,24 @@ export default function ReadyToSendPage() {
       >
         Google search ↗
       </a>
-      {lead.councilUrl && (
+      {/* Always offered — falls back to a pre-filled portal search, then a web
+          search, when the GLA feed carries no direct link for this borough. */}
+      <a
+        href={planningApplicationLink(lead).url}
+        target="_blank"
+        rel="noreferrer"
+        className="px-2 py-1 rounded border text-blue-600 hover:bg-blue-50"
+      >
+        {planningApplicationLink(lead).label} ↗
+      </a>
+      {mapUrl(lead.address, lead.council) && (
         <a
-          href={lead.councilUrl}
+          href={mapUrl(lead.address, lead.council)!}
           target="_blank"
           rel="noreferrer"
           className="px-2 py-1 rounded border text-blue-600 hover:bg-blue-50"
         >
-          Council page ↗
+          See the property ↗
         </a>
       )}
     </div>
@@ -280,7 +301,7 @@ export default function ReadyToSendPage() {
                         {lead.agentEmail}
                       </a>
                       {renderApproachEmail(lead)}
-                      <div className="flex flex-wrap gap-2 pt-1">
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
                         <a href={mailtoUrl(lead)}>
                           <Button size="sm">
                             <Mail className="w-3.5 h-3.5 mr-1.5" />
@@ -393,15 +414,15 @@ export default function ReadyToSendPage() {
                             </button>
                           ))}
                         </div>
-                        {lead.councilUrl && (
+                        {(
                           <a
-                            href={lead.councilUrl}
+                            href={planningApplicationLink(lead).url}
                             target="_blank"
                             rel="noreferrer"
                             className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
                           >
                             <ExternalLink className="w-3 h-3" />
-                            Council page
+                            {planningApplicationLink(lead).label}
                           </a>
                         )}
                       </div>

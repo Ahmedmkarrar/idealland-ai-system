@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db/client";
 import { sendPlanningAlert } from "@/lib/services/email";
 import { sendTelegramAlert } from "@/lib/services/telegram";
 import { autoSendApplicationAlert } from "@/lib/services/mailing";
+import { cleanCouncilUrl, planIndexUrl, verifyMirrorUrl } from "@/lib/planning-portals";
 import { withRetry } from "@/lib/retry";
 
 // IdealLand's target band: 1-9 residential units. At 10+ units a scheme
@@ -52,6 +53,7 @@ const PLD_PROPOSED_UNITS_FIELD =
 
 interface ScrapedApplication {
   reference: string; // globally-unique PLD document id, e.g. "Camden-2026_2199_P"
+  lpaReference?: string; // the council's own ref, e.g. "26/01804/FUL"
   council: string;
   address: string;
   description: string;
@@ -60,6 +62,7 @@ interface ScrapedApplication {
   applicant?: string;
   councilUrl?: string;
   decidedAt?: Date;
+  decision?: string; // "Approved" | "Refused" | "Withdrawn" | ...
 }
 
 interface PldSource {
@@ -73,6 +76,7 @@ interface PldSource {
   status?: string | null;
   valid_date?: string | null;
   last_updated?: string | null;
+  site_name?: string | null;
   site_number?: string | number | null;
   street_name?: string | null;
   secondary_street_name?: string | null;
@@ -136,9 +140,27 @@ function absolutePldUrl(url?: string | null): string | undefined {
   const u = url?.trim();
   // Reject empties and PLD placeholder junk like "<enter PA URL here>".
   if (!u || u.includes("<") || u.includes(">")) return undefined;
-  if (/^https?:\/\//i.test(u)) return u;
-  if (!u.startsWith("/")) return undefined; // not a usable relative path
-  return `${PLD_BASE_URL}${u}`;
+  // Relative paths hang off the datahub; absolute ones are the council's own
+  // page. Either way cleanCouncilUrl has the final say, so placeholder domains
+  // some councils leave in the feed ("http://site.com/?appref=...") never reach
+  // the dashboard as a dead link.
+  const absolute = /^https?:\/\//i.test(u)
+    ? u
+    : u.startsWith("/")
+      ? `${PLD_BASE_URL}${u}`
+      : null;
+  return cleanCouncilUrl(absolute) ?? undefined;
+}
+
+// A verified link to the PlanIndex register, for boroughs that publish no link of
+// their own. Never stored unverified — see lib/planning-portals.ts.
+async function resolveMirrorUrl(
+  council: string,
+  lpaReference?: string | null
+): Promise<string | null> {
+  if (!lpaReference) return null;
+  const candidate = planIndexUrl(council, lpaReference);
+  return candidate ? await verifyMirrorUrl(candidate) : null;
 }
 
 function buildAddress(s: PldSource): string {
@@ -146,6 +168,22 @@ function buildAddress(s: PldSource): string {
     .map((p) => (p === null || p === undefined ? "" : decodeEntities(String(p))))
     .filter((p) => p.length > 0);
   if (parts.length > 0) return parts.join(", ");
+
+  // Boroughs populate location two different ways. Some fill the structured
+  // fields above; the rest put the whole address in `site_name` as one carriage-
+  // return-separated string ("51 Streatham Hill\rLondon\rLambeth\rSW2 4TS").
+  // Reading only the structured fields left about a third of all leads showing
+  // "Croydon (ref 26/00603/CONR)" — no use to anyone trying to look at the site.
+  // Split on the line breaks BEFORE decoding — decodeEntities collapses all
+  // whitespace, which would turn the separators into spaces and lose the commas.
+  if (s.site_name) {
+    const lines = String(s.site_name)
+      .split(/[\r\n]+/)
+      .map((line) => decodeEntities(line).replace(/,$/, "").trim())
+      .filter((line) => line.length > 0);
+    if (lines.length > 0) return lines.join(", ");
+  }
+
   return `${councilFromId(s.id, s.borough)} (ref ${s.lpa_app_no ?? s.id ?? "unknown"})`;
 }
 
@@ -175,7 +213,7 @@ async function fetchFromPLD(opts?: {
   const sourceFields = [
     "id", "lpa_app_no", "borough", "lpa_name", "description",
     "decision", "decision_date", "status", "valid_date", "last_updated",
-    "site_number", "street_name", "secondary_street_name", "postcode",
+    "site_name", "site_number", "street_name", "secondary_street_name", "postcode",
     "url_planning_app",
     "application_details.lead_developer_company_name",
     PLD_PROPOSED_UNITS_FIELD,
@@ -232,6 +270,9 @@ async function fetchFromPLD(opts?: {
 
       out.push({
         reference,
+        // Present on every PLD record, unlike url_planning_app — this is what
+        // reaches the application when the feed gives us no link.
+        lpaReference: s.lpa_app_no?.trim() || undefined,
         council: councilFromId(s.id, s.borough),
         address: buildAddress(s),
         description: decodeEntities(s.description),
@@ -240,6 +281,7 @@ async function fetchFromPLD(opts?: {
           parseUkDate(s.valid_date) ?? parseUkDate(s.last_updated) ?? new Date(),
         applicant: s.application_details?.lead_developer_company_name ?? undefined,
         councilUrl: absolutePldUrl(s.url_planning_app),
+        decision: includeDecided ? s.decision?.trim() || undefined : undefined,
         decidedAt: includeDecided
           ? parseUkDate(s.decision_date) ?? parseUkDate(s.last_updated)
           : undefined,
@@ -321,6 +363,13 @@ export async function scanCouncils(opts?: {
           status: "submitted",
           applicant: app.applicant ?? null,
           councilUrl: app.councilUrl ?? null,
+          lpaReference: app.lpaReference ?? null,
+          // Only when the council gives us nothing of its own, and only after the
+          // page is confirmed to exist — roughly 18 new leads a day, so a handful
+          // of HEAD requests per scan.
+          mirrorUrl: app.councilUrl
+            ? null
+            : await resolveMirrorUrl(app.council, app.lpaReference),
           submittedAt: app.submittedAt,
           alertSent: false,
         },
@@ -441,8 +490,10 @@ export async function scanHistoricalDecisions(lookbackDays = 365): Promise<{
           status: "decided",
           applicant: app.applicant ?? null,
           councilUrl: app.councilUrl ?? null,
+          lpaReference: app.lpaReference ?? null,
           submittedAt: app.submittedAt,
           decidedAt: app.decidedAt,
+          decision: app.decision ?? null,
           // Suppress all outreach — this is historical research, not a live lead.
           alertSent: true,
           decisionAlertSent: true,

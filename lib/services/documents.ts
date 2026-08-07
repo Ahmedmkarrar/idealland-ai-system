@@ -118,65 +118,66 @@ export async function retrieveDocuments(
 
   await prisma.document.deleteMany({ where: { applicationId, status: "pending" } });
 
-  const runRecord = await prisma.automationRun.create({
-    data: { type: "documents", status: "running" },
-  });
+  const [landRegistry, das] = await Promise.all([
+    fetchLandRegistryTitle(application.address),
+    // The council's own reference is what its document portal recognises; the
+    // GLA document id means nothing there.
+    fetchDasFromCouncil(application.council, application.lpaReference ?? application.reference),
+  ]);
 
-  try {
-    const [landRegistry, das] = await Promise.all([
-      fetchLandRegistryTitle(application.address),
-      fetchDasFromCouncil(application.council, application.reference),
-    ]);
+  let retrieved = 0;
+  let failed = 0;
 
-    let retrieved = 0;
-    let failed = 0;
+  const docs = [
+    { type: "land_registry", name: "Land Registry Title Register", result: landRegistry },
+    { type: "das", name: "Design & Access Statement", result: das },
+  ];
 
-    const docs = [
-      { type: "land_registry", name: "Land Registry Title Register", result: landRegistry },
-      { type: "das", name: "Design & Access Statement", result: das },
-    ];
-
-    for (const doc of docs) {
-      await prisma.document.create({
-        data: {
-          applicationId,
-          type: doc.type,
-          name: doc.name,
-          url: doc.result?.url ?? null,
-          fileSize: doc.result?.fileSize ?? null,
-          status: doc.result ? "retrieved" : "pending",
-          retrievedAt: doc.result ? new Date() : null,
-        },
-      });
-
-      doc.result ? retrieved++ : failed++;
-    }
-
-    const hmlrNote = isHmlrConfigured()
-      ? ""
-      : " (HMLR_API_KEY not set — Land Registry docs pending)";
-
-    await prisma.automationRun.update({
-      where: { id: runRecord.id },
+  for (const doc of docs) {
+    await prisma.document.create({
       data: {
-        status: "completed",
-        completedAt: new Date(),
-        summary: `Processed documents for ${application.reference}. Retrieved: ${retrieved}, Pending: ${failed}.${hmlrNote}`,
+        applicationId,
+        type: doc.type,
+        name: doc.name,
+        url: doc.result?.url ?? null,
+        fileSize: doc.result?.fileSize ?? null,
+        status: doc.result ? "retrieved" : "pending",
+        retrievedAt: doc.result ? new Date() : null,
       },
     });
 
-    return { retrieved, failed };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await prisma.automationRun.update({
-      where: { id: runRecord.id },
-      data: { status: "failed", completedAt: new Date(), error: message },
-    });
-    throw error;
+    if (doc.result) retrieved++;
+    else failed++;
   }
+
+  return { retrieved, failed };
 }
 
-export async function retrieveAllPendingDocuments(): Promise<{ processed: number }> {
+/**
+ * Batch document retrieval.
+ *
+ * This used to open an AutomationRun per application — 10 per cron run, six runs
+ * a day — which buried every meaningful entry in the dashboard's activity feed
+ * under thousands of "Document Retrieval" lines. It now logs one run for the
+ * whole batch, and only when it has something to report.
+ *
+ * It also no longer runs at all without an HMLR key: the only documents it can
+ * fetch are Land Registry titles, so with no key every application produced two
+ * permanently-pending placeholder rows and nothing else.
+ */
+export async function retrieveAllPendingDocuments(): Promise<{
+  processed: number;
+  retrieved: number;
+  skipped?: string;
+}> {
+  if (!isHmlrConfigured()) {
+    return {
+      processed: 0,
+      retrieved: 0,
+      skipped: "HMLR_API_KEY not set — Land Registry retrieval is off",
+    };
+  }
+
   const applicationsWithoutDocs = await prisma.planningApplication.findMany({
     where: {
       OR: [
@@ -187,11 +188,36 @@ export async function retrieveAllPendingDocuments(): Promise<{ processed: number
     take: 10,
   });
 
-  for (const app of applicationsWithoutDocs) {
-    await retrieveDocuments(app.id);
+  if (applicationsWithoutDocs.length === 0) return { processed: 0, retrieved: 0 };
+
+  const runRecord = await prisma.automationRun.create({
+    data: { type: "documents", status: "running" },
+  });
+
+  let retrieved = 0;
+  try {
+    for (const app of applicationsWithoutDocs) {
+      const result = await retrieveDocuments(app.id);
+      retrieved += result.retrieved;
+    }
+    await prisma.automationRun.update({
+      where: { id: runRecord.id },
+      data: {
+        status: "completed",
+        completedAt: new Date(),
+        summary: `Checked ${applicationsWithoutDocs.length} application${applicationsWithoutDocs.length === 1 ? "" : "s"} for Land Registry documents — ${retrieved} retrieved.`,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await prisma.automationRun.update({
+      where: { id: runRecord.id },
+      data: { status: "failed", completedAt: new Date(), error: message },
+    });
+    throw error;
   }
 
-  return { processed: applicationsWithoutDocs.length };
+  return { processed: applicationsWithoutDocs.length, retrieved };
 }
 
 export async function getDocuments(applicationId?: string) {
