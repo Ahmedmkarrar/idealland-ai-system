@@ -330,7 +330,14 @@ export async function bulkFindContacts(options?: {
   const limit = Math.min(options?.limit ?? 5, 40);
   const autoDraft = options?.autoDraft ?? false;
 
-  const base = { leadScore: { gte: minScore }, status: { not: "decided" }, contactStatus: null } as const;
+  // publicOwner excluded: researching land the council already owns spends real
+  // money (a Claude call plus web searches) on a site that can never be brokered.
+  const base = {
+    leadScore: { gte: minScore },
+    status: { not: "decided" },
+    contactStatus: null,
+    publicOwner: false,
+  } as const;
   const order = [{ leadScore: "desc" as const }, { submittedAt: "desc" as const }];
 
   // A council portal link is the finder's strongest signal (it confirms the
