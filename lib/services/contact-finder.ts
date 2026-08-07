@@ -22,6 +22,7 @@ import { withRetry } from "@/lib/retry";
 import { usableEmail } from "@/lib/email-address";
 import { councilReference } from "@/lib/planning-portals";
 import { timeGreeting } from "@/lib/approach-email";
+import { extractContactFromPortal } from "@/lib/services/portal-extract";
 
 const MODEL = "claude-haiku-4-5-20251001";
 
@@ -91,6 +92,29 @@ export async function findAgentContact(
   if (!options?.force && app.contactStatus === "found") {
     return { ok: true, reason: "Already researched (pass force to re-run)" };
   }
+  // Try the council's own register first. It is authoritative, free, and returns
+  // the agent's name, email and phone together — roughly 88% of the time on Idox
+  // portals, against ~15% for the web-search researcher, whose own notes kept
+  // saying it could not read these pages. Only fall through to the model when the
+  // register is unreachable or names no agent.
+  const fromPortal = await extractContactFromPortal(app.councilUrl);
+  if (fromPortal && (fromPortal.agentEmail || fromPortal.agentName)) {
+    await prisma.planningApplication.update({
+      where: { id: applicationId },
+      data: {
+        agentName: fromPortal.agentName,
+        agentFirm: fromPortal.agentFirm,
+        agentEmail: fromPortal.agentEmail,
+        agentPhone: fromPortal.agentPhone,
+        agentWebsite: null,
+        contactNotes: fromPortal.source,
+        contactStatus: "found",
+        contactResearchedAt: new Date(),
+      },
+    });
+    return { ok: true, result: { ...fromPortal, notes: fromPortal.source, agentWebsite: null, found: true } };
+  }
+
   if (!isClaudeConfigured()) return { ok: false, reason: "ANTHROPIC_API_KEY not configured" };
 
   const councilLine = app.councilUrl ? `\n  Council application page: ${app.councilUrl}` : "";
