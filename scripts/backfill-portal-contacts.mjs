@@ -110,8 +110,14 @@ const upd = db.prepare(
      contactNotes=?, contactStatus='found', contactResearchedAt=CURRENT_TIMESTAMP WHERE id=?`
 );
 
+// A council that keeps refusing is telling us something. Rather than retry it all
+// night, give up on that host after MAX_BACKOFFS and leave its remaining leads to
+// the daily job, which picks them up a handful at a time and never bursts.
+const MAX_BACKOFFS = Number(process.env.PORTAL_MAX_BACKOFFS ?? 3);
+
 const lastHit = new Map();   // host -> timestamp
 const coolUntil = new Map(); // host -> timestamp, set on 429
+const backoffs = new Map();  // host -> count
 const stats = new Map();     // host -> {found, email, none, failed, blocked}
 const stat = (h) => {
   if (!stats.has(h)) stats.set(h, { found: 0, email: 0, none: 0, failed: 0, blocked: 0 });
@@ -148,10 +154,18 @@ while (queues.some((q) => q.i < q.list.length)) {
     } catch { /* unreachable */ }
 
     if (status === 429 || status === 503) {
-      coolUntil.set(q.host, Date.now() + COOLDOWN_MS);
-      q.i--; // put it back; a later pass can retry
+      const n = (backoffs.get(q.host) ?? 0) + 1;
+      backoffs.set(q.host, n);
       stat(q.host).blocked++;
-      console.log(`  ⏸  ${q.host} asked us to slow down (${status}) — backing off ${Math.round(COOLDOWN_MS / 60000)}m`);
+      q.i--; // put it back rather than losing the lead
+      if (n >= MAX_BACKOFFS) {
+        const left = q.list.length - q.i;
+        q.i = q.list.length; // drop out of this run
+        console.log(`  ✋ ${q.host} refused ${n} times — leaving its remaining ${left} leads to the daily job`);
+      } else {
+        coolUntil.set(q.host, Date.now() + COOLDOWN_MS);
+        console.log(`  ⏸  ${q.host} asked us to slow down (${status}) — backing off ${Math.round(COOLDOWN_MS / 60000)}m`);
+      }
       continue;
     }
 
