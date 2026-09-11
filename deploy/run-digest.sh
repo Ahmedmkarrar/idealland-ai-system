@@ -17,7 +17,10 @@ if [ -z "$CRON_SECRET" ]; then
   exit 1
 fi
 
-RESPONSE=$(curl -sS --max-time 120 \
+# 15-minute timeout — the digest runs the day's contact research (up to
+# CONTACT_DAILY_LIMIT leads, each a Claude call with web searches) before it
+# sends, which regularly overran the old 120s limit and logged a failure.
+RESPONSE=$(curl -sS --max-time 900 \
   -H "Authorization: Bearer $CRON_SECRET" \
   http://127.0.0.1:3000/api/cron/digest 2>&1) || {
   echo "$(date -Iseconds) ERROR: digest call failed: $RESPONSE" >&2
