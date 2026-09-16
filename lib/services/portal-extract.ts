@@ -95,20 +95,6 @@ export function cleanAgentName(raw: string | null): string | null {
   return name.length > 1 ? name : null;
 }
 
-/** An agent's postal address often names the practice on its first line. */
-function firmFromAddress(address: string | null, name: string | null): string | null {
-  if (!address) return null;
-  const first = address.split(",")[0]?.trim();
-  if (!first) return null;
-  // A street address ("75 Stapleton Road") is not a firm name; a practice usually
-  // isn't just a number and a road.
-  if (/^\d+[a-z]?\s/i.test(first) || /\b(road|street|lane|avenue|close|way|drive|court)\b/i.test(first)) {
-    return null;
-  }
-  if (name && first.toLowerCase() === name.toLowerCase()) return null;
-  return first;
-}
-
 /**
  * Idox Public Access. The application page carries the contacts under
  * `?activeTab=contacts`; everything we need is in `<div class="agents">`.
@@ -146,14 +132,15 @@ function parseIdox(html: string): PortalContact | null {
   // individual moving on, and is the more appropriate address to write to.
   const rawEmail = pick("company email", "email");
   const phone = pick("company phone", "phone", "mobile", "telephone");
-  const address = pick("address");
 
   const { email } = usableEmail(rawEmail);
   if (!name && !email && !phone) return null;
 
   return {
     agentName: name,
-    agentFirm: firmFromAddress(address, name),
+    // Idox publishes no company field, and the address's first line is a
+    // building or unit ("Unit 9B", "Parkshot House"), never the practice.
+    agentFirm: null,
     agentEmail: email,
     agentPhone: phone,
     source: "Council planning register (Idox contacts tab)",

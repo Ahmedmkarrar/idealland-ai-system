@@ -8,7 +8,8 @@
 // when it signals it has had enough. Being a good guest is the difference between
 // this working next month and getting the droplet blocked.
 //
-// Usage: node scripts/backfill-portal-contacts.mjs [--dry] [--force] [--limit N]
+// Usage: node scripts/backfill-portal-contacts.mjs [--dry] [--force] [--limit N] [--min-score N]
+//   --min-score limits to leads scoring N+ that are live or approved (refusals skipped).
 
 import Database from "better-sqlite3";
 
@@ -16,6 +17,8 @@ const DRY = process.argv.includes("--dry");
 const FORCE = process.argv.includes("--force");
 const li = process.argv.indexOf("--limit");
 const LIMIT = li > -1 ? Number(process.argv[li + 1]) : Infinity;
+const mi = process.argv.indexOf("--min-score");
+const MIN_SCORE = mi > -1 ? Number(process.argv[mi + 1]) : null;
 
 const HOST_GAP_MS = Number(process.env.PORTAL_HOST_GAP_MS ?? 6000); // per council
 const GLOBAL_GAP_MS = Number(process.env.PORTAL_GLOBAL_GAP_MS ?? 900); // overall
@@ -52,15 +55,6 @@ const contactsUrl = (u) =>
     ? null
     : u.replace(/([?&])activeTab=[^&]*/gi, "$1activeTab=contacts");
 
-function firmFromAddress(addr, name) {
-  if (!addr) return null;
-  const f = addr.split(",")[0]?.trim();
-  if (!f) return null;
-  if (/^\d+[a-z]?\s/i.test(f) || /\b(road|street|lane|avenue|close|way|drive|court)\b/i.test(f)) return null;
-  if (name && f.toLowerCase() === name.toLowerCase()) return null;
-  return f;
-}
-
 function parse(html) {
   const b = html.match(/<div class="agents">([\s\S]*?)<\/div>/i)?.[1];
   if (!b) return null;
@@ -78,7 +72,7 @@ function parse(html) {
       : null;
   const phone = pick("company phone", "phone", "mobile", "telephone");
   if (!name && !email && !phone) return null;
-  return { name, firm: firmFromAddress(pick("address"), name), email, phone };
+  return { name, firm: null, email, phone };
 }
 
 const db = new Database("prisma/dev.db");
@@ -87,8 +81,9 @@ let rows = db.prepare(
   `SELECT id, council, councilUrl FROM PlanningApplication
    WHERE councilUrl LIKE '%online-applications/applicationDetails.do%'
      AND publicOwner = 0 AND (${where})
+     ${MIN_SCORE === null ? "" : "AND leadScore >= ? AND (status != 'decided' OR decision = 'Approved')"}
    ORDER BY (status != 'decided') DESC, leadScore DESC`
-).all();
+).all(...(MIN_SCORE === null ? [] : [MIN_SCORE]));
 if (LIMIT !== Infinity) rows = rows.slice(0, LIMIT);
 
 // Bucket by host, then interleave so consecutive requests hit different councils.
