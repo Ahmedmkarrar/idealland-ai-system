@@ -4,6 +4,7 @@ import { scanCouncils } from "@/lib/services/sourcing";
 import { checkDecisions } from "@/lib/services/decisions";
 import { retrieveAllPendingDocuments } from "@/lib/services/documents";
 import { bulkAnalyze } from "@/lib/services/intelligence";
+import { scanSurrey } from "@/lib/services/planit";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -27,6 +28,9 @@ export async function GET(request: NextRequest) {
     scanCouncils(),
     checkDecisions(),
     retrieveAllPendingDocuments(),
+    // Surrey comes from PlanIt, which is scanned at most once a day however often
+    // this cron fires — see lib/services/planit.ts.
+    scanSurrey(),
   ]);
 
   const pick = (r: PromiseSettledResult<unknown>) =>
@@ -42,6 +46,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     ran: new Date().toISOString(),
     sourcing: pick(results[0]),
+    surrey: pick(results[3]),
     decisions: pick(results[1]),
     documents: pick(results[2]),
     analysis,

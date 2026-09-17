@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
+import { inCoverage } from "@/lib/coverage";
 
 // Telegram notification channel. Chosen over email for internal alerts because
 // it pushes instantly to staff phones with zero DNS/verification/deliverability
@@ -92,7 +93,7 @@ export async function sendTelegramAlert(applications: PlanningAlertPayload[]): P
   if (applications.length === 0) return { sent: false, reason: "no applications" };
 
   const count = applications.length;
-  const header = `🏗️ <b>${count} new planning application${count > 1 ? "s" : ""} detected</b> — London\n`;
+  const header = `🏗️ <b>${count} new planning application${count > 1 ? "s" : ""} detected</b>\n`;
   const lines = applications
     .map(
       (a) =>
@@ -112,7 +113,7 @@ export async function sendTelegramDigest(): Promise<{ sent: boolean; count: numb
 
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const apps = await prisma.planningApplication.findMany({
-    where: { createdAt: { gte: since } },
+    where: { ...inCoverage, createdAt: { gte: since } },
     orderBy: [{ createdAt: "desc" }],
   });
   const ranked = [...apps].sort((a, b) => (b.leadScore ?? 0) - (a.leadScore ?? 0));
@@ -130,7 +131,7 @@ export async function sendTelegramDigest(): Promise<{ sent: boolean; count: numb
       .join("");
     body = `☀️ <b>IdealLand daily digest</b> — ${escapeHtml(today)}\n\n${count} new live opportunit${count > 1 ? "ies" : "y"}, ranked by lead score:${cards}`;
   } else {
-    body = `☀️ <b>IdealLand daily digest</b> — ${escapeHtml(today)}\n\nNo new qualifying opportunities in the last 24 hours. All 33 London boroughs scanned as scheduled — a quiet night, not a fault.`;
+    body = `☀️ <b>IdealLand daily digest</b> — ${escapeHtml(today)}\n\nNo new qualifying opportunities in the last 24 hours. Your areas were scanned as scheduled — a quiet night, not a fault.`;
   }
 
   await sendTelegramMessage(body);

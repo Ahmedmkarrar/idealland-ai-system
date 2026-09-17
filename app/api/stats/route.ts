@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
+import { inCoverage } from "@/lib/coverage";
 
 export async function GET() {
   const [
@@ -18,9 +19,9 @@ export async function GET() {
     readyToSend,
     approachesSent,
   ] = await Promise.all([
-    prisma.planningApplication.count(),
-    prisma.planningApplication.count({ where: { status: "approved" } }),
-    prisma.planningApplication.count({ where: { status: "submitted" } }),
+    prisma.planningApplication.count({ where: inCoverage }),
+    prisma.planningApplication.count({ where: { ...inCoverage, status: "approved" } }),
+    prisma.planningApplication.count({ where: { ...inCoverage, status: "submitted" } }),
     prisma.document.count(),
     prisma.document.count({ where: { status: "retrieved" } }),
     prisma.socialPost.count(),
@@ -32,11 +33,11 @@ export async function GET() {
       orderBy: { startedAt: "desc" },
       take: 10,
     }),
-    prisma.planningApplication.count({ where: { leadScore: { gte: 8 } } }),
+    prisma.planningApplication.count({ where: { ...inCoverage, leadScore: { gte: 8 } } }),
     // A lead is "ready" once it has a named contact and a written approach email
     // and nobody has sent it yet — this is the queue on the /ready page.
     prisma.planningApplication.count({
-      where: { contactStatus: "found", approachBody: { not: null }, approachStatus: { not: "sent" } },
+      where: { ...inCoverage, contactStatus: "found", approachBody: { not: null }, approachStatus: { not: "sent" } },
     }),
     prisma.planningApplication.count({ where: { approachStatus: "sent" } }),
   ]);

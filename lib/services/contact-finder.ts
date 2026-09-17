@@ -22,7 +22,8 @@ import { withRetry } from "@/lib/retry";
 import { usableEmail } from "@/lib/email-address";
 import { councilReference } from "@/lib/planning-portals";
 import { timeGreeting } from "@/lib/approach-email";
-import { extractContactFromPortal } from "@/lib/services/portal-extract";
+import { extractContactFromPortal, resolveIdoxApplicationUrl, type PortalContact } from "@/lib/services/portal-extract";
+import { inCoverage } from "@/lib/coverage";
 
 const MODEL = "claude-haiku-4-5-20251001";
 
@@ -82,58 +83,107 @@ function parseJson<T>(raw: string): T | null {
   }
 }
 
+type ContactDetails = Pick<ContactResult, "agentName" | "agentFirm" | "agentEmail" | "agentPhone">;
+
+/** The register's read, filled out with whatever the lead already carried. */
+function withKnownDetails(fromPortal: PortalContact | null, app: ContactDetails): ContactDetails {
+  return {
+    agentName: fromPortal?.agentName ?? app.agentName,
+    agentFirm: fromPortal?.agentFirm ?? app.agentFirm,
+    agentEmail: fromPortal?.agentEmail ?? usableEmail(app.agentEmail).email,
+    agentPhone: fromPortal?.agentPhone ?? app.agentPhone,
+  };
+}
+
+async function saveContact(applicationId: string, result: ContactResult): Promise<void> {
+  await prisma.planningApplication.update({
+    where: { id: applicationId },
+    data: {
+      agentName: result.agentName,
+      agentFirm: result.agentFirm,
+      agentEmail: result.agentEmail,
+      agentPhone: result.agentPhone,
+      agentWebsite: result.agentWebsite,
+      contactNotes: result.notes,
+      contactStatus: result.found ? "found" : "not_found",
+      contactResearchedAt: new Date(),
+    },
+  });
+}
+
 export async function findAgentContact(
   applicationId: string,
   options?: { force?: boolean }
 ): Promise<{ ok: boolean; reason?: string; result?: ContactResult }> {
-  const app = await prisma.planningApplication.findUnique({ where: { id: applicationId } });
+  let app = await prisma.planningApplication.findUnique({ where: { id: applicationId } });
   if (!app) return { ok: false, reason: "Application not found" };
 
   if (!options?.force && app.contactStatus === "found") {
     return { ok: true, reason: "Already researched (pass force to re-run)" };
   }
-  // Try the council's own register first. It is authoritative, free, and returns
-  // the agent's name, email and phone together — roughly 88% of the time on Idox
-  // portals, against ~15% for the web-search researcher, whose own notes kept
-  // saying it could not read these pages. Only fall through to the model when the
-  // register is unreachable or names no agent.
-  const fromPortal = await extractContactFromPortal(app.councilUrl);
-  if (fromPortal && (fromPortal.agentEmail || fromPortal.agentName)) {
-    await prisma.planningApplication.update({
-      where: { id: applicationId },
-      data: {
-        agentName: fromPortal.agentName,
-        agentFirm: fromPortal.agentFirm,
-        agentEmail: fromPortal.agentEmail,
-        agentPhone: fromPortal.agentPhone,
-        agentWebsite: null,
-        contactNotes: fromPortal.source,
-        contactStatus: "found",
-        contactResearchedAt: new Date(),
-      },
-    });
-    return { ok: true, result: { ...fromPortal, notes: fromPortal.source, agentWebsite: null, found: true } };
+
+  // Lambeth publishes no application links in the London feed, so its leads used
+  // to go straight to web search. Its register can be searched by reference, and
+  // once found the link is kept for Lucy as well as for the reader below.
+  if (!app.councilUrl) {
+    const resolved = await resolveIdoxApplicationUrl(app.council, councilReference(app));
+    if (resolved) {
+      app = await prisma.planningApplication.update({
+        where: { id: applicationId },
+        data: { councilUrl: resolved },
+      });
+    }
   }
 
-  if (!isClaudeConfigured()) return { ok: false, reason: "ANTHROPIC_API_KEY not configured" };
+  // Try the council's own register first. It is authoritative, free, and on most
+  // Idox registers returns the agent's name, email and phone together. Some
+  // registers only name the agent's practice — that is kept as a head start for
+  // the web researcher rather than thrown away.
+  const fromPortal = await extractContactFromPortal(app.councilUrl);
+  if (fromPortal?.agentEmail) {
+    const contact = withKnownDetails(fromPortal, app);
+    await saveContact(applicationId, { ...contact, agentWebsite: app.agentWebsite, notes: fromPortal.source, found: true });
+    return { ok: true, result: { ...contact, agentWebsite: app.agentWebsite, notes: fromPortal.source, found: true } };
+  }
+
+  // What is already known before searching: the practice the register named, or
+  // the agent details a Surrey council published through PlanIt at ingest.
+  const known = withKnownDetails(fromPortal, app);
+
+  if (!isClaudeConfigured()) {
+    if (known.agentName || known.agentFirm) {
+      await saveContact(applicationId, { ...known, agentWebsite: app.agentWebsite, notes: fromPortal?.source ?? null, found: true });
+      return { ok: true, result: { ...known, agentWebsite: app.agentWebsite, notes: fromPortal?.source ?? null, found: true } };
+    }
+    return { ok: false, reason: "ANTHROPIC_API_KEY not configured" };
+  }
 
   const councilLine = app.councilUrl ? `\n  Council application page: ${app.councilUrl}` : "";
   const applicantLine = app.applicant ? `\n  Applicant/developer named in the feed: ${app.applicant}` : "";
+  // A named practice turns this from "who filed it?" into "what is this firm's
+  // inbox?", which web search answers far more often.
+  const knownLines = [
+    known.agentName && `\n  Agent named on the council register: ${known.agentName}`,
+    known.agentFirm && `\n  Agent's practice named on the council register: ${known.agentFirm}`,
+    known.agentPhone && `\n  Agent phone on the council register: ${known.agentPhone}`,
+  ]
+    .filter(Boolean)
+    .join("");
   // The council's own reference is the one that appears on the planning portal and
   // in the application documents, so it's the one a web search can actually hit.
   // `app.reference` is a GLA document id that exists nowhere outside our database —
   // searching for it returns nothing, which quietly cost us hit rate.
   const searchableRef = councilReference(app) ?? app.reference;
 
-  const prompt = `You are a UK property-sourcing researcher for IdealLand. We have found a London planning application and need to contact the AGENT who submitted it (usually the architect or planning consultant; sometimes the owner directly) to ask whether the owner would sell the site.
+  const prompt = `You are a UK property-sourcing researcher for IdealLand. We have found a planning application in ${app.council} and need to contact the AGENT who submitted it (usually the architect or planning consultant; sometimes the owner directly) to ask whether the owner would sell the site.
 
-Find the agent/architect/planning consultant behind this application and their firm's contact details. Search the council's planning portal page and the web (firm websites, professional directories). Do NOT invent details — only report what you actually find.
+Find the agent/architect/planning consultant behind this application and their firm's contact details. If the agent's practice is already named below, confirm it and find that practice's email address and website. Search the council's planning portal page and the web (firm websites, professional directories). Do NOT invent details — only report what you actually find.
 
 Planning application:
   Council: ${app.council}
   Council reference: ${searchableRef}
   Address: ${app.address}
-  Description: ${app.description}${applicantLine}${councilLine}
+  Description: ${app.description}${applicantLine}${knownLines}${councilLine}
 
 Return ONLY a JSON object, no prose:
 {
@@ -156,6 +206,11 @@ Return ONLY a JSON object, no prose:
   const parsed = raw ? parseJson<Partial<ContactResult>>(raw) : null;
 
   if (!parsed) {
+    if (known.agentName || known.agentFirm) {
+      const result = { ...known, agentWebsite: app.agentWebsite, notes: fromPortal?.source ?? null, found: true };
+      await saveContact(applicationId, result);
+      return { ok: true, result };
+    }
     await prisma.planningApplication.update({
       where: { id: applicationId },
       data: { contactStatus: "not_found", contactResearchedAt: new Date() },
@@ -169,13 +224,15 @@ Return ONLY a JSON object, no prose:
   const rawEmail = clean(parsed.agentEmail);
   const { email: agentEmail, rejected: rejectedEmail } = usableEmail(rawEmail);
 
+  // The register outranks the researcher on who the agent is; the researcher
+  // only fills what the register left blank.
   const result: ContactResult = {
-    agentName: clean(parsed.agentName),
-    agentFirm: clean(parsed.agentFirm),
+    agentName: known.agentName ?? clean(parsed.agentName),
+    agentFirm: known.agentFirm ?? clean(parsed.agentFirm),
     agentEmail,
-    agentPhone: clean(parsed.agentPhone),
-    agentWebsite: clean(parsed.agentWebsite),
-    notes: clean(parsed.notes),
+    agentPhone: known.agentPhone ?? clean(parsed.agentPhone),
+    agentWebsite: clean(parsed.agentWebsite) ?? app.agentWebsite,
+    notes: [fromPortal?.source, clean(parsed.notes)].filter(Boolean).join(" — ") || null,
     found: false,
   };
   // A guessed pattern isn't a contact — surface it as a lead to chase, never as a
@@ -191,41 +248,30 @@ Return ONLY a JSON object, no prose:
   // "Found" means we have something actionable to reach a human with.
   result.found = !!(result.agentEmail || result.agentName || result.agentFirm);
 
-  await prisma.planningApplication.update({
-    where: { id: applicationId },
-    data: {
-      agentName: result.agentName,
-      agentFirm: result.agentFirm,
-      agentEmail: result.agentEmail,
-      agentPhone: result.agentPhone,
-      agentWebsite: result.agentWebsite,
-      contactNotes: result.notes,
-      contactStatus: result.found ? "found" : "not_found",
-      contactResearchedAt: new Date(),
-    },
-  });
-
+  await saveContact(applicationId, result);
   return { ok: true, result };
 }
 
 // IdealLand's outbound identity in the seller-approach email.
 //
-// Approaches go out signed by James, at Lucy's request — she is cc'd on every one
-// (see the mailto builders in the Sourcing and Ready pages) so she keeps a record
-// without being the name on the letter.
+// Lucy sends every approach from her own Gmail, so the letter is signed by her
+// (her request, 17 Sep 2026 — it had been signed "James", which read oddly coming
+// from her address). James is still copied on each one; see lib/approach-email.ts.
 //
-// The letter no longer prints a phone number: Lucy sends it from her own mailbox
-// and offers to set up the call, so there is nothing to publish for James in a
-// cold email. IDEALLAND_SENDER_NAME overrides the name in the sign-off.
-const SENDER_NAME = process.env.IDEALLAND_SENDER_NAME ?? "James";
+// The letter prints no phone number: Lucy offers to set up the call herself.
+// IDEALLAND_SENDER_NAME overrides the name in the sign-off.
+const SENDER_NAME = process.env.IDEALLAND_SENDER_NAME ?? "Lucy James";
 const IDEALLAND_WEBSITE = process.env.IDEALLAND_WEBSITE ?? "www.idealland.co.uk";
 
 // A first name is only safe as a greeting when it's a single clean person. Two
 // agents joined by "/" or a comma-separated list get the time-of-day greeting.
 function greeting(agentName: string | null): string {
   if (!agentName || /[/,&]/.test(agentName)) return timeGreeting();
-  const first = agentName.trim().split(/\s+/)[0];
-  return first ? `Dear ${first},` : timeGreeting();
+  const raw = agentName.trim().split(/\s+/)[0];
+  // Registers often store names in capitals — "Dear PETER," reads like a form letter.
+  const first = raw && raw === raw.toUpperCase() ? raw.charAt(0) + raw.slice(1).toLowerCase() : raw;
+  // An initial alone ("Dear J,") is worse than a plain "Good morning,".
+  return first && first.replace(/\./g, "").length > 1 ? `Dear ${first},` : timeGreeting();
 }
 
 function unitPhrase(units: number): string {
@@ -234,11 +280,12 @@ function unitPhrase(units: number): string {
 
 /**
  * Lucy's wording (2026-08-07). She sends the letter herself and books the call,
- * so it offers to arrange one rather than printing a direct line — which also
- * removes the need to publish a number for James in a cold email.
+ * so it offers to arrange one rather than printing a direct line. Now that the
+ * letter is signed by Lucy, "a phone call with Lucy" would have her offering a
+ * call with herself, so the name is dropped.
  */
 function chatOffer(): string {
-  return `If you would prefer to have a chat please let me know and I will set up a phone call with ${SENDER_NAME}.`;
+  return "If you would prefer to have a chat please let me know and I will set up a phone call.";
 }
 
 // Lucy's own templates, verbatim in structure (supplied 2026-07-25), with the
@@ -356,12 +403,16 @@ export async function bulkFindContacts(options?: {
 
   // publicOwner excluded: researching land the council already owns spends real
   // money (a Claude call plus web searches) on a site that can never be brokered.
+  // Live applications, plus decided ones the council APPROVED — a site with fresh
+  // permission is the strongest letter Lucy sends, and those were being skipped
+  // entirely. Refusals and withdrawals stay out.
   const base = {
+    ...inCoverage,
     leadScore: { gte: minScore },
-    status: { not: "decided" },
     contactStatus: null,
     publicOwner: false,
-  } as const;
+    OR: [{ status: { not: "decided" } }, { decision: { contains: "Approv" } }, { decision: { contains: "Grant" } }],
+  };
   const order = [{ leadScore: "desc" as const }, { submittedAt: "desc" as const }];
 
   // A council portal link is the finder's strongest signal (it confirms the
@@ -408,21 +459,36 @@ export function isApproachOutcome(v: string): v is ApproachOutcome {
 
 // Staff sends the approach from their own email/LinkedIn, then records what
 // happened here so the ROI pipeline has a measurable end.
+//
+// "sent" also covers a site Lucy approached some other way — a letter written
+// before the system found it, or a phone call — so it stops appearing in her
+// to-do lists. "not_sent" undoes a mis-click: the draft goes back to Ready to
+// Send and any outcome recorded against it is cleared.
 export async function setApproachState(
   applicationId: string,
-  changes: { status?: "drafted" | "sent"; outcome?: ApproachOutcome | null }
+  changes: { status?: "drafted" | "sent" | "not_sent"; outcome?: ApproachOutcome | null }
 ): Promise<{ ok: boolean; reason?: string }> {
   const app = await prisma.planningApplication.findUnique({ where: { id: applicationId } });
   if (!app) return { ok: false, reason: "Application not found" };
 
   const data: Record<string, unknown> = {};
-  if (changes.status) {
+  if (changes.status === "not_sent") {
+    data.approachStatus = app.approachBody ? "drafted" : null;
+    data.approachSentAt = null;
+    data.approachOutcome = null;
+    data.approachOutcomeAt = null;
+  } else if (changes.status) {
     data.approachStatus = changes.status;
-    if (changes.status === "sent") data.approachSentAt = new Date();
+    if (changes.status === "sent" && app.approachStatus !== "sent") data.approachSentAt = new Date();
   }
-  if (changes.outcome !== undefined) {
+  if (changes.outcome !== undefined && changes.status !== "not_sent") {
     data.approachOutcome = changes.outcome;
     data.approachOutcomeAt = changes.outcome ? new Date() : null;
+    // Someone can only come back to a site that was approached.
+    if (changes.outcome && app.approachStatus !== "sent") {
+      data.approachStatus = "sent";
+      data.approachSentAt = new Date();
+    }
   }
   if (Object.keys(data).length === 0) return { ok: false, reason: "Nothing to update" };
 

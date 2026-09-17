@@ -5,6 +5,7 @@ import { autoSendApplicationAlert } from "@/lib/services/mailing";
 import { cleanCouncilUrl, planIndexUrl, verifyMirrorUrl } from "@/lib/planning-portals";
 import { publicOwnerReason } from "@/lib/public-ownership";
 import { withRetry } from "@/lib/retry";
+import { coverageArea, inCoverage } from "@/lib/coverage";
 
 // IdealLand's target band: 1-9 residential units. At 10+ units a scheme
 // triggers affordable-housing obligations (s.106 / borough policy) that
@@ -67,7 +68,7 @@ interface ScrapedApplication {
   decision?: string; // "Approved" | "Refused" | "Withdrawn" | ...
 }
 
-interface PldSource {
+export interface PldSource {
   id?: string;
   lpa_app_no?: string;
   borough?: string;
@@ -166,11 +167,16 @@ async function resolveMirrorUrl(
   return candidate ? await verifyMirrorUrl(candidate) : null;
 }
 
-function buildAddress(s: PldSource): string {
+export function buildAddress(s: PldSource): string {
   const parts = [s.site_number, s.street_name, s.secondary_street_name, s.postcode]
     .map((p) => (p === null || p === undefined ? "" : decodeEntities(String(p))))
     .filter((p) => p.length > 0);
-  if (parts.length > 0) return parts.join(", ");
+  // Without a street name the structured fields are just a house number or a
+  // postcode — Lewisham fills only site_number and keeps "14 WASTDALE ROAD,
+  // LONDON, SE23 1HN" in site_name, which left letters reading "the application
+  // at 14". The street is what makes it an address.
+  const hasStreet = !!s.street_name && decodeEntities(String(s.street_name)).length > 0;
+  if (parts.length > 0 && (hasStreet || !s.site_name)) return parts.join(", ");
 
   // Boroughs populate location two different ways. Some fill the structured
   // fields above; the rest put the whole address in `site_name` as one carriage-
@@ -315,6 +321,7 @@ function looksLikeTinyApplication(description: string): boolean {
 // Qualifies an application as an IdealLand target: a genuine residential scheme
 // in the 1-9 unit band, and not an obvious domestic extension.
 function qualifies(app: ScrapedApplication): boolean {
+  if (!coverageArea(app.council)) return false;
   if (app.units < MIN_UNITS || app.units > MAX_UNITS) return false;
   if (looksLikeTinyApplication(app.description)) return false;
   return true;
@@ -363,7 +370,7 @@ export async function scanCouncils(opts?: {
           reference: app.reference,
           address: app.address,
           description: app.description,
-          council: app.council,
+          council: coverageArea(app.council)?.council ?? app.council,
           units: app.units,
           status: "submitted",
           applicant: app.applicant ?? null,
@@ -431,7 +438,7 @@ export async function scanCouncils(opts?: {
       data: {
         status: "completed",
         completedAt: new Date(),
-        summary: `Scanned Planning London DataHub (last ${windowDays}d, ${councilsSeen.size} boroughs with matches). Found ${newApplications.length} new ${MIN_UNITS}-${MAX_UNITS} unit applications${
+        summary: `Scanned Planning London DataHub (last ${windowDays}d, ${councilsSeen.size} covered boroughs with matches). Found ${newApplications.length} new ${MIN_UNITS}-${MAX_UNITS} unit applications${
           opts?.silent ? " (silent backfill)" : `, alerted ${alerted}`
         }.`,
       },
@@ -493,7 +500,7 @@ export async function scanHistoricalDecisions(lookbackDays = 365): Promise<{
           reference: app.reference,
           address: app.address,
           description: app.description,
-          council: app.council,
+          council: coverageArea(app.council)?.council ?? app.council,
           units: app.units,
           status: "decided",
           applicant: app.applicant ?? null,
@@ -540,6 +547,9 @@ export async function getApplications(filters?: {
 }) {
   return prisma.planningApplication.findMany({
     where: {
+      // Outside the covered areas a lead is only still listed if it was already
+      // approached, so the Sent page keeps the full history of letters written.
+      OR: [inCoverage, { approachStatus: "sent" }],
       ...(filters?.status && { status: filters.status }),
       ...(filters?.council && { council: filters.council }),
       ...(filters?.minUnits && { units: { gte: filters.minUnits } }),

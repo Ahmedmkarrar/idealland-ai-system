@@ -11,6 +11,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db/client";
 import { gatherPdfContextForApp } from "@/lib/services/pdf";
 import { withRetry } from "@/lib/retry";
+import { inCoverage } from "@/lib/coverage";
 
 function isClaudeConfigured(): boolean {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -25,19 +26,19 @@ interface AnalysisResult {
 
 const SCHEMA_HINT = `Return JSON only, matching this shape exactly:
 {
-  "summary": "2-3 sentences for a London property developer explaining why THIS application matters. Reference specific facts from the description/PDF. Insider tone, not press release.",
+  "summary": "2-3 sentences for a property developer explaining why THIS application matters. Reference specific facts from the description/PDF. Insider tone, not press release.",
   "score": <integer 1-10>,
   "scoreReason": "<one short clause explaining the score>"
 }`;
 
-const BRAND_CONTEXT = `IdealLand sources off-market London property opportunities for developers, architects, and investors. They monitor planning applications across London's boroughs and surface deals before agents see them. Your output is shown to IdealLand staff to help them prioritise which planning applications to act on.
+const BRAND_CONTEXT = `IdealLand sources off-market property opportunities for developers, architects, and investors. They monitor planning applications in six south-west London boroughs (Kingston, Merton, Wandsworth, Hammersmith & Fulham, Lambeth, Lewisham) and five neighbouring Surrey districts (Elmbridge, Epsom & Ewell, Guildford, Mole Valley, Reigate & Banstead), and surface deals before agents see them. Every one of these areas is one IdealLand's buyers want — do not mark a site down for being in Surrey rather than London. Your output is shown to IdealLand staff to help them prioritise which planning applications to act on.
 
 IdealLand specifically targets SMALL residential schemes of 1-9 units. This is deliberate: at 10+ units a scheme triggers affordable-housing obligations (s.106 / borough policy) that developers want to avoid, so sub-threshold 1-9 unit schemes are the most attractive, deliverable deals.
 
 Scoring rubric (1-10):
   9-10 = Prime: 6-9 units, desirable borough, clean new-build or conversion, no obvious constraints
   6-8  = Strong: 3-5 units, decent location, clear build/conversion angle
-  4-5  = Average: 1-2 units, edge boroughs, or minor infill
+  4-5  = Average: 1-2 units, a less sought-after part of the area, or minor infill
   1-3  = Marginal: barely qualifies, peripheral, or heavily constrained (e.g. conservation/listed limits)`;
 
 async function analyzeWithClaude(
@@ -148,7 +149,7 @@ export async function bulkAnalyze(limit = 20): Promise<{ analyzed: number; skipp
   }
 
   const unanalyzed = await prisma.planningApplication.findMany({
-    where: { OR: [{ intelligenceSummary: null }, { leadScore: null }] },
+    where: { ...inCoverage, OR: [{ intelligenceSummary: null }, { leadScore: null }] },
     orderBy: { submittedAt: "desc" },
     take: limit,
   });

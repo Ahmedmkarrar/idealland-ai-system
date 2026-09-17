@@ -104,7 +104,7 @@ const RUN_TYPE_LABELS: Record<string, string> = {
 
 // What each run type is actually for, shown under the feed so nobody has to ask.
 const RUN_TYPE_EXPLAINER: Record<string, string> = {
-  sourcing: "Pulls new 1-9 unit planning applications from the London-wide feed every 4 hours.",
+  sourcing: "Pulls new 1-9 unit planning applications for your 11 areas every 4 hours.",
   decisions: "Re-checks sites already in the list to see if the council has decided them.",
   documents: "Looks up Land Registry title documents for a site. Needs an HMLR key — off until one is added.",
 };
@@ -243,7 +243,7 @@ export default function OverviewPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Automation Overview</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Finding 1–9 unit residential sites across all 33 London boroughs, every 4 hours
+            Finding 1–9 unit residential sites in your 11 areas, every 4 hours
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

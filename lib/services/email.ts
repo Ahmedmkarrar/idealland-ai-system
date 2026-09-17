@@ -1,6 +1,7 @@
 import { Resend } from "resend";
 import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
+import { inCoverage } from "@/lib/coverage";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -23,7 +24,7 @@ export async function sendPlanningAlert(applications: PlanningAlertPayload[]): P
   }
 
   const count = applications.length;
-  const subject = `🏗️ ${count} new planning application${count > 1 ? "s" : ""} detected — London`;
+  const subject = `🏗️ ${count} new planning application${count > 1 ? "s" : ""} detected`;
 
   const rows = applications
     .map(
@@ -85,7 +86,7 @@ export async function sendDailyDigest(): Promise<{ sent: boolean; count: number;
 
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const apps = await prisma.planningApplication.findMany({
-    where: { createdAt: { gte: since } },
+    where: { ...inCoverage, createdAt: { gte: since } },
     orderBy: [{ createdAt: "desc" }],
   });
 
@@ -127,7 +128,7 @@ export async function sendDailyDigest(): Promise<{ sent: boolean; count: number;
          Overnight the system surfaced <strong>${count}</strong> new live opportunit${count > 1 ? "ies" : "y"}, ranked by lead score:
        </p>${cards}`
     : `<p style="color:#475569;font-size:15px">
-         No new qualifying opportunities in the last 24 hours. The system scanned all 33 London boroughs as scheduled — a quiet night, not a fault. You'll get the next find as soon as one lands.
+         No new qualifying opportunities in the last 24 hours. The system scanned your areas as scheduled — a quiet night, not a fault. You'll get the next find as soon as one lands.
        </p>`;
 
   const subject = count > 0

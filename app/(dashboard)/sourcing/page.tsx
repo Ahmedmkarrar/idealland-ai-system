@@ -11,6 +11,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { RefreshCw, Search, ScanLine, Building2, MapPin, Calendar, ChevronDown, ChevronRight, Clock, CheckCircle, XCircle, AlertCircle, Sparkles, Send, Mail, Users, ExternalLink, Copy } from "lucide-react";
 import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
 import { approachMailto, refreshGreeting } from "@/lib/approach-email";
+import { COVERAGE_AREAS, isCoveredCouncil } from "@/lib/coverage";
+import { OUTCOME_OPTIONS, cameBack, formatSentDate, outcomeLabel, updateApproach, type ApproachChange } from "@/lib/approach-state";
 
 interface PlanningApplication {
   id: string;
@@ -42,6 +44,7 @@ interface PlanningApplication {
   approachSubject: string | null;
   approachBody: string | null;
   approachStatus: string | null;
+  approachSentAt: string | null;
   approachOutcome: string | null;
   documents: Array<{ id: string; type: string; status: string }>;
 }
@@ -97,6 +100,11 @@ export default function SourcingPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("submitted");
   const [includePublic, setIncludePublic] = useState(false);
+  const [areaFilter, setAreaFilter] = useState("all");
+  // Lucy asked for a way to mark off sites she has already written to; once
+  // ticked they drop out of the working list unless she asks to see them.
+  const [hideApproached, setHideApproached] = useState(true);
+  const [savingApproachId, setSavingApproachId] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState("submitted");
   const [minScore, setMinScore] = useState(5);
   const [lastScanResult, setLastScanResult] = useState<{ found: number; alerted: number } | null>(null);
@@ -206,16 +214,11 @@ export default function SourcingPage() {
     setDraftingApproachId(null);
   };
 
-  const handleApproachState = async (
-    appId: string,
-    changes: { status?: string; outcome?: string | null }
-  ) => {
-    await fetch("/api/sourcing/approach", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ applicationId: appId, ...changes }),
-    });
+  const handleApproachState = async (appId: string, changes: ApproachChange) => {
+    setSavingApproachId(appId);
+    await updateApproach(appId, changes);
     await fetchApplications();
+    setSavingApproachId(null);
   };
 
   const handleToggleHistory = async (applicationId: string) => {
@@ -231,7 +234,15 @@ export default function SourcingPage() {
     }
   };
 
-  const filtered = applications
+  // Only Lucy's areas are worked here. Letters already sent elsewhere are still
+  // returned by the API for the Sent page, and are left out of this list.
+  const inArea = applications.filter(
+    (app) => isCoveredCouncil(app.council) && (areaFilter === "all" || app.council === areaFilter)
+  );
+  const isApproached = (app: PlanningApplication) => app.approachStatus === "sent";
+
+  const filtered = inArea
+    .filter((app) => !hideApproached || !isApproached(app))
     .filter((app) =>
       searchQuery
         ? app.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -264,10 +275,11 @@ export default function SourcingPage() {
   const hiddenByScore =
     minScore === 0
       ? 0
-      : applications.filter((a) => a.leadScore != null && a.leadScore < minScore).length;
-  const hiddenPublic = includePublic ? 0 : applications.filter((a) => a.publicOwner).length;
-  const unanalyzedCount = applications.filter((a) => !a.intelligenceSummary || !a.leadScore).length;
-  const readyToSendCount = applications.filter(
+      : inArea.filter((a) => a.leadScore != null && a.leadScore < minScore).length;
+  const hiddenPublic = includePublic ? 0 : inArea.filter((a) => a.publicOwner).length;
+  const hiddenApproached = hideApproached ? inArea.filter(isApproached).length : 0;
+  const unanalyzedCount = inArea.filter((a) => !a.intelligenceSummary || !a.leadScore).length;
+  const readyToSendCount = inArea.filter(
     (a) => a.contactStatus === "found" && a.approachBody && a.approachStatus !== "sent"
   ).length;
 
@@ -277,7 +289,8 @@ export default function SourcingPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Planning Sourcing</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Monitoring all 33 London boroughs for 1&ndash;9 unit residential schemes
+            Monitoring your 11 areas &mdash; 6 London boroughs and 5 Surrey districts &mdash; for 1&ndash;9 unit
+            residential schemes
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -338,10 +351,10 @@ export default function SourcingPage() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: "Total", value: applications.length, color: "text-foreground" },
-          { label: "Submitted", value: applications.filter((a) => a.status === "submitted").length, color: "text-blue-600" },
-          { label: "Approved", value: applications.filter((a) => a.status === "approved").length, color: "text-green-600" },
-          { label: "Avg Units", value: applications.length ? Math.round(applications.reduce((sum, a) => sum + a.units, 0) / applications.length) : 0, color: "text-purple-600" },
+          { label: "Sites in view", value: inArea.length, color: "text-foreground" },
+          { label: "Score 7+", value: inArea.filter((a) => (a.leadScore ?? 0) >= 7).length, color: "text-emerald-600" },
+          { label: "Agent found", value: inArea.filter((a) => a.contactStatus === "found").length, color: "text-blue-600" },
+          { label: "Approached", value: inArea.filter(isApproached).length, color: "text-violet-600" },
         ].map(({ label, value, color }) => (
           <Card key={label}>
             <CardContent className="pt-4 pb-4">
@@ -389,6 +402,19 @@ export default function SourcingPage() {
                 <SelectItem value="0">Show everything</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={areaFilter} onValueChange={(v) => setAreaFilter(v ?? "all")}>
+              <SelectTrigger className="w-full sm:w-48">
+                <SelectValue placeholder="Area" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All my areas</SelectItem>
+                {COVERAGE_AREAS.map((area) => (
+                  <SelectItem key={area.council} value={area.council}>
+                    {area.council}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={sortBy} onValueChange={(v) => setSortBy(v ?? "submitted")}>
               <SelectTrigger className="w-full sm:w-36">
                 <SelectValue placeholder="Sort by" />
@@ -400,20 +426,31 @@ export default function SourcingPage() {
               </SelectContent>
             </Select>
           </div>
-          {(hiddenByScore > 0 || hiddenPublic > 0) && (
-            <p className="text-xs text-muted-foreground mt-2">
-              Showing <strong>{filtered.length.toLocaleString()}</strong> of {applications.length.toLocaleString()} —
-              {hiddenByScore > 0 && <> {hiddenByScore.toLocaleString()} scoring below {minScore}</>}
-              {hiddenByScore > 0 && hiddenPublic > 0 && " and"}
-              {hiddenPublic > 0 && (
-                <> {hiddenPublic.toLocaleString()} council-owned</>
-              )}{" "}
-              set aside.{" "}
-              <button onClick={() => { setMinScore(0); setIncludePublic(true); }} className="text-blue-600 hover:underline">
-                Show everything
-              </button>
-            </p>
-          )}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
+            <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={hideApproached}
+                onChange={(e) => setHideApproached(e.target.checked)}
+              />
+              Hide sites I&rsquo;ve already approached
+              {hiddenApproached > 0 && <span className="text-muted-foreground">({hiddenApproached})</span>}
+            </label>
+            {(hiddenByScore > 0 || hiddenPublic > 0) && (
+              <p className="text-xs text-muted-foreground">
+                Showing <strong>{filtered.length.toLocaleString()}</strong> of {inArea.length.toLocaleString()} —
+                {hiddenByScore > 0 && <> {hiddenByScore.toLocaleString()} scoring below {minScore}</>}
+                {hiddenByScore > 0 && hiddenPublic > 0 && " and"}
+                {hiddenPublic > 0 && (
+                  <> {hiddenPublic.toLocaleString()} council-owned</>
+                )}{" "}
+                set aside.{" "}
+                <button onClick={() => { setMinScore(0); setIncludePublic(true); }} className="text-blue-600 hover:underline">
+                  Show everything
+                </button>
+              </p>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -431,6 +468,7 @@ export default function SourcingPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8" />
+                  <TableHead className="w-24 text-center">Approached</TableHead>
                   <TableHead className="w-14 text-center">Score</TableHead>
                   <TableHead>Reference</TableHead>
                   <TableHead>Address</TableHead>
@@ -456,6 +494,18 @@ export default function SourcingPage() {
                         {expandedAppId === app.id
                           ? <ChevronDown className="w-4 h-4 text-muted-foreground" />
                           : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+                      </TableCell>
+                      {/* Stops the click reaching the row, which would expand it. */}
+                      <TableCell className="text-center py-3" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 cursor-pointer align-middle"
+                          aria-label={`Already approached ${app.address}`}
+                          title={isApproached(app) ? `Approached ${formatSentDate(app.approachSentAt)} — untick to undo` : "Tick if you've already approached this site"}
+                          checked={isApproached(app)}
+                          disabled={savingApproachId === app.id}
+                          onChange={() => handleApproachState(app.id, { status: isApproached(app) ? "not_sent" : "sent" })}
+                        />
                       </TableCell>
                       <TableCell className="text-center py-3">
                         <span
@@ -488,7 +538,9 @@ export default function SourcingPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-xs whitespace-nowrap">
-                        {app.contactStatus === "found" ? (
+                        {cameBack(app.approachOutcome) ? (
+                          <span className="text-violet-700 font-medium">{outcomeLabel(app.approachOutcome)}</span>
+                        ) : app.contactStatus === "found" ? (
                           <span className="text-emerald-700 font-medium" title={app.agentEmail ?? app.agentFirm ?? "Contact found"}>
                             {app.agentEmail ? "✓ email" : "✓ named"}
                           </span>
@@ -504,8 +556,8 @@ export default function SourcingPage() {
 
                     {expandedAppId === app.id && (
                       <TableRow key={`${app.id}-history`}>
-                        <TableCell colSpan={9} className="bg-muted/30 px-6 py-4">
-                          {/* The row spans all 9 columns, so this cell is as wide as the
+                        <TableCell colSpan={10} className="bg-muted/30 px-6 py-4">
+                          {/* The row spans all 10 columns, so this cell is as wide as the
                               table — which is wider than the viewport. Left-pinning the
                               panel and capping its width keeps the action buttons on
                               screen instead of rendering them past the right edge. */}
@@ -553,6 +605,39 @@ export default function SourcingPage() {
                                 </div>
                               );
                             })()}
+
+                            {/* Whether Lucy has approached this site — works with or without
+                                a contact, since she often already knows the agent. */}
+                            <div className="bg-white border rounded-lg p-3 flex flex-wrap items-center gap-2">
+                              <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border cursor-pointer select-none font-medium">
+                                <input
+                                  type="checkbox"
+                                  checked={isApproached(app)}
+                                  disabled={savingApproachId === app.id}
+                                  onChange={() => handleApproachState(app.id, { status: isApproached(app) ? "not_sent" : "sent" })}
+                                />
+                                {isApproached(app) ? `Approached ${formatSentDate(app.approachSentAt)}` : "I've already approached this site"}
+                              </label>
+                              {OUTCOME_OPTIONS.map((option) => {
+                                const selected = app.approachOutcome === option.value;
+                                return (
+                                  <label
+                                    key={option.value}
+                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border cursor-pointer select-none ${
+                                      selected ? option.className : "text-muted-foreground hover:bg-muted"
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={selected}
+                                      disabled={savingApproachId === app.id}
+                                      onChange={() => handleApproachState(app.id, { outcome: selected ? null : option.value })}
+                                    />
+                                    {option.label}
+                                  </label>
+                                );
+                              })}
+                            </div>
 
                             {/* AI Intelligence Summary */}
                             <div>
@@ -701,16 +786,9 @@ export default function SourcingPage() {
                                               <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs">Open in email</Button>
                                             </a>
                                           )}
-                                          {app.approachStatus !== "sent"
-                                            ? <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={() => handleApproachState(app.id, { status: "sent" })}>Mark sent</Button>
-                                            : (
-                                              <div className="flex items-center gap-1.5">
-                                                <span className="text-xs text-emerald-700 font-medium">Sent ✓ · outcome:</span>
-                                                {(["replied", "interested", "won", "dead"] as const).map((o) => (
-                                                  <button key={o} onClick={() => handleApproachState(app.id, { outcome: app.approachOutcome === o ? null : o })} className={`px-1.5 py-0.5 rounded text-xs border ${app.approachOutcome === o ? "bg-violet-100 text-violet-800 border-violet-300" : "text-muted-foreground hover:bg-muted"}`}>{o}</button>
-                                                ))}
-                                              </div>
-                                            )}
+                                          {app.approachStatus !== "sent" && (
+                                            <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={() => handleApproachState(app.id, { status: "sent" })}>Mark as sent</Button>
+                                          )}
                                         </div>
                                       </div>
                                     ) : (

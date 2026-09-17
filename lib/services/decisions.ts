@@ -3,6 +3,7 @@ import { sendDecisionAlert } from "@/lib/services/email";
 import { withRetry } from "@/lib/retry";
 import * as cheerio from "cheerio";
 import { IDOX_COUNCIL_DOMAIN_MAP } from "@/lib/constants/councils";
+import { inCoverage } from "@/lib/coverage";
 
 const DECISION_STATUS_MAP: Record<string, string> = {
   "application permitted": "approved",
@@ -95,7 +96,7 @@ export async function checkDecisions(): Promise<{ checked: number; changed: numb
 
   try {
     const pendingApplications = await prisma.planningApplication.findMany({
-      where: { status: "submitted", decisionAlertSent: false },
+      where: { ...inCoverage, status: "submitted", decisionAlertSent: false },
       orderBy: { submittedAt: "asc" },
       take: 50,
     });

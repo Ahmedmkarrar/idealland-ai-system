@@ -10,6 +10,7 @@ import { Resend } from "resend";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
+import { inCoverage } from "@/lib/coverage";
 
 function isClaudeConfigured(): boolean {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -264,6 +265,7 @@ export async function generateOutreachForTopLeads(options?: {
   // apps a previous run already covered.
   const candidates = await prisma.planningApplication.findMany({
     where: {
+      ...inCoverage,
       leadScore: { gte: minScore },
       status: { not: "decided" },
       outreachEmails: { none: {} },

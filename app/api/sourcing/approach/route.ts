@@ -7,7 +7,7 @@ import { applyRateLimit } from "@/lib/rate-limit";
 interface Body {
   applicationId?: string;
   force?: boolean;
-  status?: "drafted" | "sent";
+  status?: "drafted" | "sent" | "not_sent";
   outcome?: string | null;
 }
 
@@ -22,6 +22,9 @@ export async function POST(request: NextRequest) {
 
   // Status/outcome update path (staff marking sent / recording a reply).
   if (body.status !== undefined || body.outcome !== undefined) {
+    if (body.status !== undefined && !["drafted", "sent", "not_sent"].includes(body.status)) {
+      return NextResponse.json({ error: "status must be one of: drafted, sent, not_sent" }, { status: 400 });
+    }
     if (body.outcome != null && !isApproachOutcome(body.outcome)) {
       return NextResponse.json(
         { error: "outcome must be one of: replied, interested, dead, won — or null" },

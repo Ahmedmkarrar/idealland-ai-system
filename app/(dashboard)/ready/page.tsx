@@ -7,16 +7,19 @@
 // overflows horizontally and pushed its own action buttons off screen.
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  RefreshCw, Search, MapPin, Mail, Copy, Check, ExternalLink,
-  AlertTriangle, Send, Inbox,
+  RefreshCw, Search, MapPin, Mail, Copy, Check,
+  AlertTriangle, Send, Inbox, CheckCheck, Undo2,
 } from "lucide-react";
 import { isUsableEmail } from "@/lib/email-address";
 import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
 import { approachMailto, refreshGreeting } from "@/lib/approach-email";
+import { isCoveredCouncil } from "@/lib/coverage";
+import { cameBack, updateApproach, type ApproachChange } from "@/lib/approach-state";
 
 interface ReadyLead {
   id: string;
@@ -41,8 +44,6 @@ interface ReadyLead {
   approachStatus: string | null;
   approachOutcome: string | null;
 }
-
-const OUTCOMES = ["replied", "interested", "won", "dead"] as const;
 
 function scoreBadgeClass(score: number | null): string {
   if (score == null) return "bg-gray-100 text-gray-500 border-gray-200";
@@ -69,7 +70,8 @@ export default function ReadyToSendPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [showSent, setShowSent] = useState(false);
+  // The last site moved to Sent, so a mis-click can be undone from right here.
+  const [lastSent, setLastSent] = useState<ReadyLead | null>(null);
 
   const fetchLeads = useCallback(async () => {
     const response = await fetch("/api/sourcing");
@@ -87,15 +89,9 @@ export default function ReadyToSendPage() {
     fetchLeads();
   }, [fetchLeads]);
 
-  const handleApproachState = async (
-    appId: string,
-    changes: { status?: string; outcome?: string | null }
-  ) => {
-    await fetch("/api/sourcing/approach", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ applicationId: appId, ...changes }),
-    });
+  const handleApproachState = async (lead: ReadyLead, changes: ApproachChange) => {
+    await updateApproach(lead.id, changes);
+    setLastSent(changes.status === "sent" ? lead : null);
     await fetchLeads();
   };
 
@@ -113,8 +109,9 @@ export default function ReadyToSendPage() {
       : true;
 
   const visible = leads.filter(matchesSearch);
-  const sent = visible.filter((l) => l.approachStatus === "sent");
-  const pending = visible.filter((l) => l.approachStatus !== "sent");
+  const sentCount = leads.filter((l) => l.approachStatus === "sent").length;
+  // Outside Lucy's areas nothing is left to send — those letters live on the Sent page.
+  const pending = visible.filter((l) => l.approachStatus !== "sent" && isCoveredCouncil(l.council));
   // A firm's generic inbox is fine; a guessed pattern like "firstname@firm.co.uk"
   // is not — those go to the lookup queue instead of offering a one-click send.
   const readyToEmail = pending.filter((l) => isUsableEmail(l.agentEmail));
@@ -219,7 +216,9 @@ export default function ReadyToSendPage() {
         <h1 className="text-2xl font-bold tracking-tight">Ready to Send</h1>
         <p className="text-muted-foreground text-sm mt-1">
           Sites where we&rsquo;ve found the agent and written your approach email. Read it, send it,
-          then mark it sent.
+          then press <strong>Mark as sent</strong> — it moves to the{" "}
+          <Link href="/sent" className="text-blue-600 hover:underline">Sent</Link> page. If you&rsquo;ve
+          already written to them another way, press <strong>Already approached</strong>.
         </p>
       </div>
 
@@ -227,10 +226,10 @@ export default function ReadyToSendPage() {
         {[
           { label: "Ready to email", value: readyToEmail.length, color: "text-emerald-600" },
           { label: "Need an address", value: needsLookup.length, color: "text-amber-600" },
-          { label: "Sent", value: sent.length, color: "text-blue-600" },
+          { label: "Sent", value: sentCount, color: "text-blue-600" },
           {
-            label: "Replies",
-            value: leads.filter((l) => l.approachOutcome && l.approachOutcome !== "dead").length,
+            label: "Came back",
+            value: leads.filter((l) => cameBack(l.approachOutcome)).length,
             color: "text-violet-600",
           },
         ].map(({ label, value, color }) => (
@@ -242,6 +241,30 @@ export default function ReadyToSendPage() {
           </Card>
         ))}
       </div>
+
+      {lastSent && (
+        <Card className="border-blue-200 bg-blue-50 max-w-4xl">
+          <CardContent className="py-3 flex flex-wrap items-center gap-3">
+            <CheckCheck className="w-4 h-4 text-blue-600 shrink-0" />
+            <p className="text-sm text-blue-900 flex-1 min-w-[12rem]">
+              <strong>{lastSent.address}</strong> moved to{" "}
+              <Link href="/sent" className="underline">Sent</Link>.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                await updateApproach(lastSent.id, { status: "not_sent" });
+                setLastSent(null);
+                await fetchLeads();
+              }}
+            >
+              <Undo2 className="w-3.5 h-3.5 mr-1.5" />
+              Undo
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="relative max-w-md">
         <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -259,13 +282,14 @@ export default function ReadyToSendPage() {
             <div key={i} className="h-40 bg-muted rounded animate-pulse" />
           ))}
         </div>
-      ) : leads.length === 0 ? (
+      ) : pending.length === 0 && !searchQuery ? (
         <Card>
           <CardContent className="py-12 text-center space-y-2">
             <Inbox className="w-8 h-8 mx-auto text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              Nothing ready yet. On the <strong>Sourcing</strong> page, open a lead and click{" "}
-              <strong>Find contact</strong>, then <strong>Draft approach</strong> — it&rsquo;ll appear here.
+              Nothing waiting to send. New contacts are researched every morning, or on the{" "}
+              <strong>Sourcing</strong> page open a lead and click <strong>Find contact</strong>, then{" "}
+              <strong>Draft approach</strong> — it&rsquo;ll appear here.
             </p>
           </CardContent>
         </Card>
@@ -308,10 +332,19 @@ export default function ReadyToSendPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => handleApproachState(lead.id, { status: "sent" })}
+                          onClick={() => handleApproachState(lead, { status: "sent" })}
                         >
                           <Send className="w-3.5 h-3.5 mr-1.5" />
-                          Mark sent
+                          Mark as sent
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground"
+                          onClick={() => handleApproachState(lead, { status: "sent" })}
+                          title="You've already written to or spoken with them — moves it to Sent without emailing"
+                        >
+                          Already approached
                         </Button>
                       </div>
                     </div>
@@ -354,10 +387,19 @@ export default function ReadyToSendPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => handleApproachState(lead.id, { status: "sent" })}
+                          onClick={() => handleApproachState(lead, { status: "sent" })}
                         >
                           <Send className="w-3.5 h-3.5 mr-1.5" />
-                          Mark sent
+                          Mark as sent
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground"
+                          onClick={() => handleApproachState(lead, { status: "sent" })}
+                          title="You've already written to or spoken with them — moves it to Sent without emailing"
+                        >
+                          Already approached
                         </Button>
                       </div>
                     </div>
@@ -367,66 +409,13 @@ export default function ReadyToSendPage() {
             </section>
           )}
 
-          {/* Already sent — collapsed by default, this is the follow-up list */}
-          {sent.length > 0 && (
-            <section className="space-y-3">
-              <button
-                onClick={() => setShowSent(!showSent)}
-                className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5 hover:text-foreground"
-              >
-                <Check className="w-3.5 h-3.5" />
-                Sent ({sent.length}) — {showSent ? "hide" : "show"}
-              </button>
-              {showSent &&
-                sent.map((lead) => (
-                  <Card key={lead.id} className="max-w-4xl">
-                    <CardContent className="pt-4 pb-4 space-y-3">
-                      {renderSiteHeader(lead)}
-                      <div className="border-t pt-3 space-y-2">
-                        {renderContactLine(lead)}
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-xs text-emerald-700 font-medium">Sent ✓ · outcome:</span>
-                          {OUTCOMES.map((outcome) => (
-                            <button
-                              key={outcome}
-                              onClick={() =>
-                                handleApproachState(lead.id, {
-                                  outcome: lead.approachOutcome === outcome ? null : outcome,
-                                })
-                              }
-                              className={`px-2 py-0.5 rounded text-xs border ${
-                                lead.approachOutcome === outcome
-                                  ? "bg-violet-100 text-violet-800 border-violet-300"
-                                  : "text-muted-foreground hover:bg-muted"
-                              }`}
-                            >
-                              {outcome}
-                            </button>
-                          ))}
-                        </div>
-                        {(
-                          <a
-                            href={planningApplicationLink(lead).url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
-                          >
-                            <ExternalLink className="w-3 h-3" />
-                            {planningApplicationLink(lead).label}
-                          </a>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-            </section>
-          )}
         </div>
       )}
 
       <p className="text-xs text-muted-foreground flex items-center gap-1.5">
         <RefreshCw className="w-3 h-3" />
-        Nothing is ever emailed automatically — you send every one yourself.
+        Nothing is ever emailed automatically — you send every one yourself. Sent ones are on the{" "}
+        <Link href="/sent" className="text-blue-600 hover:underline">Sent</Link> page.
       </p>
     </div>
   );

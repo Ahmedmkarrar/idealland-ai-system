@@ -4,7 +4,7 @@
 // their own mailbox. So these are the only levers we have over who receives a
 // copy and what the greeting says at the moment it actually goes out.
 
-/** James is copied so he sees every approach going out in his name. */
+/** James is copied so he sees every approach Lucy sends. */
 export const APPROACH_CC =
   process.env.NEXT_PUBLIC_IDEALLAND_APPROACH_CC ?? "james@idealland.co.uk";
 

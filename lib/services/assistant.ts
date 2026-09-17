@@ -14,6 +14,7 @@ import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
 import { findAgentContact, draftApproach } from "@/lib/services/contact-finder";
 import { getRoiSnapshot } from "@/lib/services/roi";
+import { inCoverage } from "@/lib/coverage";
 
 const MODEL = "claude-haiku-4-5-20251001";
 const MAX_ROUNDS = 6;
@@ -30,11 +31,11 @@ export interface ChatMessage {
 
 const SYSTEM_PROMPT = `You are the IdealLand sourcing assistant, helping Lucy James work the property-sourcing pipeline.
 
-IdealLand finds small residential development sites (1-9 units) in London from planning applications, works out the agent who filed each one, and approaches them to ask whether the owner would sell — IdealLand is the retained buyer's agent and earns a sourcing fee. Never suggest pitching a site straight to a developer.
+IdealLand finds small residential development sites (1-9 units) in six south-west London boroughs (Kingston, Merton, Wandsworth, Hammersmith & Fulham, Lambeth, Lewisham) and five Surrey districts (Elmbridge, Epsom & Ewell, Guildford, Mole Valley, Reigate & Banstead) from planning applications, works out the agent who filed each one, and approaches them to ask whether the owner would sell — IdealLand is the retained buyer's agent and earns a sourcing fee. Never suggest pitching a site straight to a developer.
 
 How to help:
 - Use the tools to answer with REAL data. Never invent numbers, addresses, or leads — if a tool returns nothing, say so plainly.
-- When Lucy describes what she wants ("houses in Croydon with planning up to 9 units"), translate it into a search_leads call with the right filters.
+- When Lucy describes what she wants ("houses in Kingston with planning up to 9 units"), translate it into a search_leads call with the right filters.
 - Keep answers short and scannable. Use simple bullet lists — NEVER markdown tables (they render as raw pipes in the chat). One lead per line: address — borough — N units — score — planning status — (ref). Mention the reference so she can find it on the Sourcing page.
 - "with planning" / "with pp" means an application that has been decided; remind her to confirm on the council page whether it was granted vs refused, since we don't store that.
 - Planning data has no asking price, so you cannot confirm any site fits a budget — say that if asked about price.
@@ -56,7 +57,7 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: "object",
       properties: {
-        borough: { type: "string", description: "Borough/council name, e.g. 'Croydon', 'Greenwich', 'Lewisham'. Case-insensitive substring." },
+        borough: { type: "string", description: "Borough/council name, e.g. 'Kingston', 'Wandsworth', 'Elmbridge'. Case-insensitive substring." },
         minUnits: { type: "number", description: "Minimum residential units (1-9)." },
         maxUnits: { type: "number", description: "Maximum residential units (1-9)." },
         planningStatus: { type: "string", enum: ["with_permission", "seeking", "any"], description: "with_permission = decided application; seeking = live/undecided." },
@@ -119,6 +120,9 @@ async function runTool(name: string, input: Json): Promise<Json> {
     case "search_leads": {
       const where: Json = {};
       const and: Json[] = [];
+      // Leads outside the covered areas are set aside; only letters already sent
+      // there stay reachable, so "what have I sent" still answers in full.
+      and.push(input.approachStatus === "sent" ? {} : inCoverage);
       if (input.borough) where.council = { contains: String(input.borough) };
       const units: Json = {};
       if (typeof input.minUnits === "number") units.gte = input.minUnits;

@@ -8,6 +8,10 @@
 // Fixed at ingest, but scanCouncils skips references it has already seen, so
 // existing rows need patching directly.
 //
+// Second pass (17 Sep 2026): Lewisham fills only site_number, so its leads were
+// stored as "14" or "446" and letters read "the application at 14". Rows with no
+// street in the address are now repaired from site_name too.
+//
 // Usage: node scripts/backfill-address.mjs [--dry]
 
 import Database from "better-sqlite3";
@@ -37,7 +41,8 @@ function buildAddress(s) {
   const parts = [s.site_number, s.street_name, s.secondary_street_name, s.postcode]
     .map((p) => (p === null || p === undefined ? "" : decodeEntities(String(p))))
     .filter((p) => p.length > 0);
-  if (parts.length > 0) return parts.join(", ");
+  const hasStreet = !!s.street_name && decodeEntities(String(s.street_name)).length > 0;
+  if (parts.length > 0 && (hasStreet || !s.site_name)) return parts.join(", ");
 
   if (s.site_name) {
     const lines = String(s.site_name)
@@ -76,13 +81,17 @@ async function fetchAddresses(references) {
 
 const db = new Database("prisma/dev.db");
 
-// Only rows still showing the "<Council> (ref <x>)" placeholder.
+// Rows still showing the "<Council> (ref <x>)" placeholder, or with no street at
+// all — just a house number or a postcode. PlanIt rows aren't in the London feed.
+const hasNoStreet = (address) => !/[A-Za-z]{3}/.test(address);
+const needsRepair = (address) => address.includes("(ref ") || hasNoStreet(address);
 const pending = db
-  .prepare(`SELECT reference FROM PlanningApplication WHERE address LIKE '%(ref %'`)
+  .prepare(`SELECT reference, address FROM PlanningApplication WHERE reference NOT LIKE 'PlanIt-%'`)
   .all()
+  .filter((r) => needsRepair(r.address))
   .map((r) => r.reference);
 
-console.log(`${pending.length} rows have a placeholder address`);
+console.log(`${pending.length} rows have a placeholder or street-less address`);
 
 const update = db.prepare(`UPDATE PlanningApplication SET address = ? WHERE reference = ?`);
 const applyBatch = db.transaction((pairs) => {
@@ -101,7 +110,7 @@ for (let i = 0; i < pending.length; i += BATCH_SIZE) {
     console.error(`batch ${i}: ${err.message} — skipping`);
     continue;
   }
-  const pairs = [...addresses.entries()];
+  const pairs = [...addresses.entries()].filter(([, address]) => !needsRepair(address));
   if (samples.length < 5) samples.push(...pairs.slice(0, 5 - samples.length));
   if (!DRY_RUN && pairs.length > 0) applyBatch(pairs);
   updated += pairs.length;
@@ -114,8 +123,9 @@ if (samples.length > 0) {
 }
 
 const remaining = db
-  .prepare(`SELECT COUNT(*) AS n FROM PlanningApplication WHERE address LIKE '%(ref %'`)
-  .get().n;
+  .prepare(`SELECT address FROM PlanningApplication WHERE reference NOT LIKE 'PlanIt-%'`)
+  .all()
+  .filter((r) => needsRepair(r.address)).length;
 
 console.log(
   `\n${DRY_RUN ? "[dry run] would update" : "updated"} ${updated} rows · ${remaining} still on a placeholder address`

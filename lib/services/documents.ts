@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
 import { IDOX_COUNCIL_DOMAIN_MAP } from "@/lib/constants/councils";
+import { inCoverage } from "@/lib/coverage";
 
 const HMLR_API_BASE = "https://use-land-property-data.service.gov.uk/api/v1";
 
@@ -180,6 +181,7 @@ export async function retrieveAllPendingDocuments(): Promise<{
 
   const applicationsWithoutDocs = await prisma.planningApplication.findMany({
     where: {
+      ...inCoverage,
       OR: [
         { documents: { none: {} } },
         { documents: { every: { status: "pending" } } },
