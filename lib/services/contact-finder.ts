@@ -22,7 +22,12 @@ import { withRetry } from "@/lib/retry";
 import { usableEmail } from "@/lib/email-address";
 import { councilReference } from "@/lib/planning-portals";
 import { timeGreeting } from "@/lib/approach-email";
-import { extractContactFromPortal, resolveIdoxApplicationUrl, type PortalContact } from "@/lib/services/portal-extract";
+import {
+  extractContactFromPortal,
+  resolveIdoxApplicationUrl,
+  PortalBusyError,
+  type PortalContact,
+} from "@/lib/services/portal-extract";
 import { inCoverage } from "@/lib/coverage";
 
 const MODEL = "claude-haiku-4-5-20251001";
@@ -114,7 +119,7 @@ async function saveContact(applicationId: string, result: ContactResult): Promis
 export async function findAgentContact(
   applicationId: string,
   options?: { force?: boolean }
-): Promise<{ ok: boolean; reason?: string; result?: ContactResult }> {
+): Promise<{ ok: boolean; reason?: string; busy?: boolean; result?: ContactResult }> {
   let app = await prisma.planningApplication.findUnique({ where: { id: applicationId } });
   if (!app) return { ok: false, reason: "Application not found" };
 
@@ -139,7 +144,19 @@ export async function findAgentContact(
   // Idox registers returns the agent's name, email and phone together. Some
   // registers only name the agent's practice — that is kept as a head start for
   // the web researcher rather than thrown away.
-  const fromPortal = await extractContactFromPortal(app.councilUrl);
+  let fromPortal: PortalContact | null;
+  try {
+    fromPortal = await extractContactFromPortal(app.councilUrl);
+  } catch (error) {
+    if (!(error instanceof PortalBusyError)) throw error;
+    // The register refused us, which says nothing about whether it names the
+    // agent. Put a failed lead back in the daily queue; a found one keeps what
+    // it has.
+    if (app.contactStatus === "not_found") {
+      await prisma.planningApplication.update({ where: { id: applicationId }, data: { contactStatus: null } });
+    }
+    return { ok: false, busy: true, reason: `${error.message} — left for the next run` };
+  }
   if (fromPortal?.agentEmail) {
     const contact = withKnownDetails(fromPortal, app);
     await saveContact(applicationId, { ...contact, agentWebsite: app.agentWebsite, notes: fromPortal.source, found: true });
@@ -390,6 +407,14 @@ export async function draftApproach(
 
 // Run contact discovery across the best undone leads. Newest, highest-scored,
 // not-yet-researched, still-open applications first.
+function portalHost(url: string | null): string | null {
+  try {
+    return url ? new URL(url).host : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function bulkFindContacts(options?: {
   minScore?: number;
   limit?: number;
@@ -422,7 +447,7 @@ export async function bulkFindContacts(options?: {
     where: { ...base, councilUrl: { not: null } },
     orderBy: order,
     take: limit,
-    select: { id: true },
+    select: { id: true, councilUrl: true },
   });
   const remaining = limit - withUrl.length;
   const withoutUrl = remaining > 0
@@ -430,15 +455,21 @@ export async function bulkFindContacts(options?: {
         where: { ...base, councilUrl: null },
         orderBy: order,
         take: remaining,
-        select: { id: true },
+        select: { id: true, councilUrl: true },
       })
     : [];
   const candidates = [...withUrl, ...withoutUrl];
 
   let found = 0;
   let drafted = 0;
+  // A register that refused one lead will refuse the next; leave its other leads
+  // for the next run rather than keep knocking.
+  const busyHosts = new Set<string>();
   for (const c of candidates) {
+    const host = portalHost(c.councilUrl);
+    if (host && busyHosts.has(host)) continue;
     const r = await findAgentContact(c.id);
+    if (!r.ok && host && r.busy) busyHosts.add(host);
     if (r.ok && r.result?.found) {
       found++;
       if (autoDraft) {

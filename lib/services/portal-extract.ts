@@ -52,19 +52,40 @@ export const PORTAL_REQUEST_DELAY_MS = Number(process.env.PORTAL_DELAY_MS ?? 150
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * The register is refusing us for now (429, or 503 under load). This is not "no
+ * agent on the page": Kingston rate-limited a batch on 17 Sep 2026 and every
+ * refused lead was filed as not_found and never tried again, though the agent
+ * was sitting on the page. Callers leave the lead for a later run instead.
+ */
+export class PortalBusyError extends Error {
+  constructor(readonly status: number) {
+    super(`Council register busy (HTTP ${status})`);
+  }
+}
+
+const isBusy = (status: number) => status === 429 || status === 503;
+
 async function fetchHtml(url: string): Promise<string | null> {
+  let res: Response;
   try {
-    const res = await withRetry(() =>
-      fetch(url, {
+    // One more try for a 503 hiccup; a 429 is not retried here, because hitting a
+    // register that has just asked us to slow down only prolongs the block.
+    res = await withRetry(async () => {
+      const r = await fetch(url, {
         headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml" },
         signal: AbortSignal.timeout(25000),
-      })
-    );
-    if (!res.ok) return null;
-    return await res.text();
-  } catch {
+      });
+      if (r.status === 503) throw new PortalBusyError(r.status);
+      return r;
+    }, 1);
+  } catch (error) {
+    if (error instanceof PortalBusyError) throw error;
     return null;
   }
+  if (isBusy(res.status)) throw new PortalBusyError(res.status);
+  if (!res.ok) return null;
+  return res.text().catch(() => null);
 }
 
 const ENTITIES: Record<string, string> = {
@@ -282,7 +303,8 @@ function mergeContacts(primary: PortalContact | null, secondary: PortalContact |
  * Returns null when the platform isn't supported or the page names no agent —
  * the caller then falls back to the AI researcher. A result without an email is
  * a partial contact: the caller should hand its name and practice to the
- * researcher to find the inbox.
+ * researcher to find the inbox. Throws PortalBusyError when the register is
+ * refusing requests, so the caller can try again later rather than give up.
  */
 export async function extractContactFromPortal(
   councilUrl: string | null | undefined
