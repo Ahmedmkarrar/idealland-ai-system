@@ -330,7 +330,6 @@ function buildApproachEmail(app: {
   agentName: string | null;
   units: number;
   address: string;
-  council: string;
   status: string;
   decision: string | null;
 }): { subject: string; body: string } {
@@ -365,7 +364,7 @@ I came across the application at ${app.address} for ${unitPhrase(app.units)}.
 
 I just wanted to ask — is your client planning to build it out, or would they consider a sale?
 
-We are currently working with a number of developers actively acquiring similar schemes in ${app.council} and are retained by them, so there's no fee to your client. We are also happy to discuss an introduction fee with you.
+We are currently working with a number of developers actively acquiring similar schemes in surrounding boroughs and are retained by them, so there's no fee to your client. We are also happy to discuss an introduction fee with you.
 
 ${chatOffer()}
 
@@ -388,7 +387,6 @@ export async function draftApproach(
     agentName: app.agentName,
     units: app.units,
     address: app.address,
-    council: app.council,
     status: app.status,
     decision: app.decision,
   });
