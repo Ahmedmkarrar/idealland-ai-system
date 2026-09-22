@@ -143,7 +143,15 @@ export default function ReadyToSendPage() {
           {lead.council} · {lead.units} unit{lead.units === 1 ? "" : "s"} · {lead.status} ·{" "}
           {/* The council's own ref, not our internal document id — this is the one
               that works in a planning search. */}
-          <span className="font-mono">{councilReference(lead) ?? lead.reference}</span>
+          <a
+            href={planningApplicationLink(lead).url}
+            target="_blank"
+            rel="noreferrer"
+            title={planningApplicationLink(lead).hint}
+            className="font-mono text-blue-600 hover:underline"
+          >
+            {councilReference(lead) ?? lead.reference} ↗
+          </a>
         </p>
       </div>
     </div>

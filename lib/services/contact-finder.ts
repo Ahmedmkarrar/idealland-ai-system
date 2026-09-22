@@ -279,13 +279,30 @@ const IDEALLAND_WEBSITE = process.env.IDEALLAND_WEBSITE ?? "www.idealland.co.uk"
 
 // A first name is only safe as a greeting when it's a single clean person. Two
 // agents joined by "/" or a comma-separated list get the time-of-day greeting.
-function greeting(agentName: string | null): string {
+//
+// Registers often put the practice in the agent-name field ("PACE-PM", firm
+// "PACE-PM LTD"), which read as "Dear Pace-pm,". A real person comes with a
+// surname, so a one-word name, a name carrying a company word, or a name that is
+// exactly the firm's name all fall back to the time-of-day greeting. A firm named
+// after its principal ("David Bowler" of "David Bowler Associates") still gets
+// "Dear David,".
+const COMPANY_WORD =
+  /\b(ltd|limited|llp|plc|inc|architects?|architecture|planning|associates|consult(ants|ancy|ing)|design|developments?|homes|properties|group|partnership|studio|surveyors|engineering)\b/i;
+
+function comparable(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function greeting(agentName: string | null, agentFirm: string | null): string {
   if (!agentName || /[/,&]/.test(agentName)) return timeGreeting();
-  const raw = agentName.trim().split(/\s+/)[0];
+  const words = agentName.trim().split(/\s+/);
+  if (words.length < 2 || COMPANY_WORD.test(agentName)) return timeGreeting();
+  if (agentFirm && comparable(agentName) === comparable(agentFirm)) return timeGreeting();
+  const raw = words[0];
   // Registers often store names in capitals — "Dear PETER," reads like a form letter.
-  const first = raw && raw === raw.toUpperCase() ? raw.charAt(0) + raw.slice(1).toLowerCase() : raw;
+  const first = raw === raw.toUpperCase() ? raw.charAt(0) + raw.slice(1).toLowerCase() : raw;
   // An initial alone ("Dear J,") is worse than a plain "Good morning,".
-  return first && first.replace(/\./g, "").length > 1 ? `Dear ${first},` : timeGreeting();
+  return first.replace(/\./g, "").length > 1 ? `Dear ${first},` : timeGreeting();
 }
 
 function unitPhrase(units: number): string {
@@ -325,13 +342,14 @@ function isApproval(decision: string | null | undefined): boolean {
 
 function buildApproachEmail(app: {
   agentName: string | null;
+  agentFirm: string | null;
   units: number;
   address: string;
   status: string;
   decision: string | null;
 }): { subject: string; body: string } {
   const hasPlanning = app.status === "decided" && isApproval(app.decision);
-  const open = greeting(app.agentName);
+  const open = greeting(app.agentName, app.agentFirm);
 
   if (hasPlanning) {
     return {
@@ -376,6 +394,7 @@ export async function draftApproach(
 
   const { subject, body } = buildApproachEmail({
     agentName: app.agentName,
+    agentFirm: app.agentFirm,
     units: app.units,
     address: app.address,
     status: app.status,
