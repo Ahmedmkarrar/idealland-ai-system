@@ -269,15 +269,12 @@ Return ONLY a JSON object, no prose:
   return { ok: true, result };
 }
 
-// IdealLand's outbound identity in the seller-approach email.
-//
-// Lucy sends every approach from her own Gmail, so the letter is signed by her
-// (her request, 17 Sep 2026 — it had been signed "James", which read oddly coming
-// from her address). James is still copied on each one; see lib/approach-email.ts.
+// The letter carries no sign-off: Lucy sends every approach from her own Gmail,
+// which appends her signature, so a "Best wishes / Lucy James" in the body doubled
+// it up and she had to delete it by hand each time (her request, 22 Sep 2026).
+// James is still copied on each one; see lib/approach-email.ts.
 //
 // The letter prints no phone number: Lucy offers to set up the call herself.
-// IDEALLAND_SENDER_NAME overrides the name in the sign-off.
-const SENDER_NAME = process.env.IDEALLAND_SENDER_NAME ?? "Lucy James";
 const IDEALLAND_WEBSITE = process.env.IDEALLAND_WEBSITE ?? "www.idealland.co.uk";
 
 // A first name is only safe as a greeting when it's a single clean person. Two
@@ -349,10 +346,7 @@ Are you planning on selling the site or building it out yourself?
 
 If not, I have several clients who would be interested in buying the site. We specialise in finding off market sites for developers, builders and architects with or without planning permission. Our services are completely free as we are retained by our purchasers. Please see our website for a snapshot of our retained clients and recent work at ${IDEALLAND_WEBSITE}.
 
-${chatOffer()}
-
-Best wishes
-${SENDER_NAME}`,
+${chatOffer()}`,
     };
   }
 
@@ -366,10 +360,7 @@ I just wanted to ask — is your client planning to build it out, or would they 
 
 We are currently working with a number of developers actively acquiring similar schemes in surrounding boroughs and are retained by them, so there's no fee to your client. We are also happy to discuss an introduction fee with you.
 
-${chatOffer()}
-
-Best wishes
-${SENDER_NAME}`,
+${chatOffer()}`,
   };
 }
 
