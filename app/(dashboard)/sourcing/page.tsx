@@ -517,7 +517,17 @@ export default function SourcingPage() {
                       </TableCell>
                       {/* Show the council's own reference — our internal document id
                           ("Croydon-26_01804_FUL") means nothing in a planning search. */}
-                      <TableCell className="font-mono text-xs">{councilReference(app) ?? app.reference}</TableCell>
+                      <TableCell className="font-mono text-xs" onClick={(e) => e.stopPropagation()}>
+                        <a
+                          href={planningApplicationLink(app).url}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={planningApplicationLink(app).hint}
+                          className="text-blue-600 hover:underline"
+                        >
+                          {councilReference(app) ?? app.reference} ↗
+                        </a>
+                      </TableCell>
                       <TableCell>
                         <div className="flex items-start gap-1.5">
                           <MapPin className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
