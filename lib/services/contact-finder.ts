@@ -21,7 +21,7 @@ import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
 import { usableEmail } from "@/lib/email-address";
 import { councilReference } from "@/lib/planning-portals";
-import { timeGreeting } from "@/lib/approach-email";
+import { formatAddress, timeGreeting } from "@/lib/approach-email";
 import {
   extractContactFromPortal,
   resolveIdoxApplicationUrl,
@@ -340,9 +340,24 @@ function isApproval(decision: string | null | undefined): boolean {
   return /approv|grant|permit|consent|allowed/.test(d);
 }
 
+/**
+ * The contact we find is the agent who filed the application, almost never the
+ * owner. Asking the agent "are you selling the site?" reads as if we think they
+ * own it, and leaves out the introduction fee that makes the reply worth their
+ * while. Only when the person we reach is the applicant themselves does the
+ * letter speak to them as the owner.
+ */
+function writingToApplicant(app: { agentName: string | null; agentFirm: string | null; applicant: string | null }): boolean {
+  if (!app.applicant) return false;
+  const applicant = comparable(app.applicant);
+  if (!applicant) return false;
+  return [app.agentName, app.agentFirm].some((name) => !!name && comparable(name) === applicant);
+}
+
 function buildApproachEmail(app: {
   agentName: string | null;
   agentFirm: string | null;
+  applicant: string | null;
   units: number;
   address: string;
   status: string;
@@ -350,15 +365,16 @@ function buildApproachEmail(app: {
 }): { subject: string; body: string } {
   const hasPlanning = app.status === "decided" && isApproval(app.decision);
   const open = greeting(app.agentName, app.agentFirm);
+  const address = formatAddress(app.address);
 
-  if (hasPlanning) {
+  if (hasPlanning && writingToApplicant(app)) {
     return {
-      subject: `Planning permission – ${app.address}`,
+      subject: `Planning permission – ${address}`,
       body: `${open}
 
 I hope you are well.
 
-I noticed from the planning register that you have received planning permission to construct ${unitPhrase(app.units)} at ${app.address}.
+I noticed from the planning register that you have received planning permission to construct ${unitPhrase(app.units)} at ${address}.
 
 Are you planning on selling the site or building it out yourself?
 
@@ -368,11 +384,28 @@ ${chatOffer()}`,
     };
   }
 
+  if (hasPlanning) {
+    return {
+      subject: `Planning permission – ${address}`,
+      body: `${open}
+
+I hope you are well.
+
+I noticed from the planning register that your client has received planning permission to construct ${unitPhrase(app.units)} at ${address}.
+
+Is your client planning on selling the site or building it out themselves?
+
+If they are considering a sale, I have several clients who would be interested in buying the site. We specialise in finding off market sites for developers, builders and architects with or without planning permission. We are retained by our purchasers, so there is no fee to your client, and we are also happy to discuss an introduction fee with you. Please see our website for a snapshot of our retained clients and recent work at ${IDEALLAND_WEBSITE}.
+
+${chatOffer()}`,
+    };
+  }
+
   return {
-    subject: `Your application at ${app.address}`,
+    subject: `Your application at ${address}`,
     body: `${open}
 
-I came across the application at ${app.address} for ${unitPhrase(app.units)}.
+I came across the application at ${address} for ${unitPhrase(app.units)}.
 
 I just wanted to ask — is your client planning to build it out, or would they consider a sale?
 
@@ -395,6 +428,7 @@ export async function draftApproach(
   const { subject, body } = buildApproachEmail({
     agentName: app.agentName,
     agentFirm: app.agentFirm,
+    applicant: app.applicant,
     units: app.units,
     address: app.address,
     status: app.status,

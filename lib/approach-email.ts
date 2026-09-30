@@ -48,3 +48,66 @@ export function approachMailto(
   if (APPROACH_BCC.trim()) params.set("bcc", APPROACH_BCC.trim());
   return `mailto:${to}?${params}`;
 }
+
+// Words that stay lower case inside an address ("Land to the Rear of…").
+const ADDRESS_SMALL_WORDS = new Set([
+  "a", "an", "and", "at", "by", "for", "in", "of", "on", "the", "to", "with",
+  "rear", "adjacent", "adjoining", "behind", "between", "opposite",
+]);
+const ADDRESS_KEEP_UPPER = new Set(["LLP", "PLC", "UK", "NHS", "YMCA", "BT"]);
+const POSTCODE_OUTWARD = /^[A-Z]{1,2}\d[A-Z\d]?$/;
+const POSTCODE_INWARD = /^\d[A-Z]{2}$/;
+
+function capitalise(part: string): string {
+  const lower = part.toLowerCase();
+  if (/^mc[a-z]{2,}/.test(lower)) return "Mc" + lower.charAt(2).toUpperCase() + lower.slice(3);
+  return lower.replace(/[a-z]/, (c) => c.toUpperCase());
+}
+
+function bareWord(word: string): string {
+  return word.replace(/[^A-Za-z0-9']/g, "");
+}
+
+function formatAddressWord(word: string, previous: string | null): string {
+  const bare = bareWord(word);
+  const followsPostcode = previous !== null && POSTCODE_OUTWARD.test(previous);
+  if (POSTCODE_OUTWARD.test(bare) || (followsPostcode && POSTCODE_INWARD.test(bare)) || ADDRESS_KEEP_UPPER.has(bare)) {
+    return word;
+  }
+  // House numbers keep their letter ("15A"); ordinals read "1st", not "1ST".
+  if (/^\d/.test(bare)) return word.replace(/^(\d+)(ST|ND|RD|TH)\b/, (_, n, s) => n + s.toLowerCase());
+  // "22 THE VILLAGE" is a street name, so "The" after a house number keeps its capital.
+  const startsName = previous === null || (/^\d/.test(previous) && bare.toLowerCase() === "the");
+  if (!startsName && ADDRESS_SMALL_WORDS.has(bare.toLowerCase())) return word.toLowerCase();
+  return word
+    .split("-")
+    .map((part) =>
+      part
+        .split("'")
+        // "JOHN'S" → "John's", "O'BRIEN" → "O'Brien".
+        .map((piece, i) => (i > 0 && piece.replace(/[^A-Za-z]/g, "").length <= 1 ? piece.toLowerCase() : capitalise(piece)))
+        .join("'")
+    )
+    .join("-");
+}
+
+/**
+ * Council registers often store the address in capitals, which reads as shouting
+ * in a letter ("8 FERNHILL OXSHOTT…"). An all-caps address is put into title case
+ * with the postcode kept upper case; one that already has lower case letters was
+ * typed by a person and is left exactly as it is.
+ */
+export function formatAddress(address: string): string {
+  const trimmed = address.trim();
+  if (/[a-z]/.test(trimmed) || !/[A-Z]/.test(trimmed)) return trimmed;
+  let previous: string | null = null;
+  return trimmed
+    .split(/(\s+)/)
+    .map((token) => {
+      if (/^\s+$/.test(token)) return token;
+      const formatted = formatAddressWord(token, previous);
+      previous = bareWord(token);
+      return formatted;
+    })
+    .join("");
+}
