@@ -64,6 +64,21 @@ export function followUpDue(value: string | null): boolean {
   return new Date(value) <= end;
 }
 
+export type ContactSource = "register" | "lucy" | "web";
+
+/**
+ * Where the contact on a letter came from. Only the register and Lucy are
+ * authoritative; web research has put the wrong firm on letters (1 Oct 2026),
+ * so those are flagged for her to check against the application first.
+ */
+export function contactSource(notes: string | null): ContactSource {
+  if (notes?.startsWith(ENTERED_BY_LUCY)) return "lucy";
+  if (notes?.includes("Council planning register")) return "register";
+  return "web";
+}
+
+export const ENTERED_BY_LUCY = "Entered by Lucy";
+
 export function formatSentDate(value: string | null): string {
   if (!value) return "date not recorded";
   return new Date(value).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });

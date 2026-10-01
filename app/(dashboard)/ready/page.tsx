@@ -19,7 +19,7 @@ import { isUsableEmail } from "@/lib/email-address";
 import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
 import { approachMailto, refreshGreeting } from "@/lib/approach-email";
 import { isCoveredCouncil } from "@/lib/coverage";
-import { cameBack, updateApproach, type ApproachChange } from "@/lib/approach-state";
+import { cameBack, contactSource, updateApproach, type ApproachChange } from "@/lib/approach-state";
 import { EditContact, LeadNote } from "@/components/lead-notes";
 
 interface ReadyLead {
@@ -46,6 +46,7 @@ interface ReadyLead {
   approachOutcome: string | null;
   staffNote: string | null;
   followUpAt: string | null;
+  publicOwner: boolean;
 }
 
 function scoreBadgeClass(score: number | null): string {
@@ -114,7 +115,19 @@ export default function ReadyToSendPage() {
   const visible = leads.filter(matchesSearch);
   const sentCount = leads.filter((l) => l.approachStatus === "sent").length;
   // Outside Lucy's areas nothing is left to send — those letters live on the Sent page.
-  const pending = visible.filter((l) => l.approachStatus !== "sent" && isCoveredCouncil(l.council));
+  // Council-owned land can't be brokered, so it never reaches the to-send list.
+  const pending = visible.filter(
+    (l) => l.approachStatus !== "sent" && isCoveredCouncil(l.council) && !l.publicOwner
+  );
+  // Several applications on one site (Betchworth House has six) usually mean one
+  // letter to the agent, not six.
+  const lettersAtAddress = new Map<string, number>();
+  for (const l of pending) {
+    const key = l.address.toLowerCase().replace(/[^a-z0-9]/g, "");
+    lettersAtAddress.set(key, (lettersAtAddress.get(key) ?? 0) + 1);
+  }
+  const sameSiteCount = (lead: ReadyLead) =>
+    (lettersAtAddress.get(lead.address.toLowerCase().replace(/[^a-z0-9]/g, "")) ?? 1) - 1;
   // A firm's generic inbox is fine; a guessed pattern like "firstname@firm.co.uk"
   // is not — those go to the lookup queue instead of offering a one-click send.
   const readyToEmail = pending.filter((l) => isUsableEmail(l.agentEmail));
@@ -160,15 +173,42 @@ export default function ReadyToSendPage() {
     </div>
   );
 
-  const renderContactLine = (lead: ReadyLead) => (
-    <div className="text-sm">
-      <span className="font-medium">{lead.agentName ?? lead.agentFirm ?? "Contact"}</span>
-      {lead.agentName && lead.agentFirm && (
-        <span className="text-muted-foreground"> · {lead.agentFirm}</span>
-      )}
-      {lead.agentPhone && <span className="text-muted-foreground"> · {lead.agentPhone}</span>}
-    </div>
-  );
+  const renderContactLine = (lead: ReadyLead) => {
+    const source = contactSource(lead.contactNotes);
+    const others = sameSiteCount(lead);
+    // Reigate files the practice under "Agent Name"; that isn't a person.
+    const person = lead.agentName && lead.agentName !== lead.agentFirm ? lead.agentName : null;
+    return (
+      <div className="space-y-1.5">
+        <div className="text-sm">
+          <span className="font-medium">{person ?? lead.agentFirm ?? "Contact"}</span>
+          {person && lead.agentFirm && <span className="text-muted-foreground"> · {lead.agentFirm}</span>}
+          {lead.agentPhone && <span className="text-muted-foreground"> · {lead.agentPhone}</span>}
+        </div>
+        {source === "register" && person && (
+          <p className="text-xs text-emerald-700">✓ Agent taken from the council&rsquo;s planning register</p>
+        )}
+        {source === "register" && !person && (
+          <p className="text-xs text-emerald-700">
+            ✓ Firm taken from the council&rsquo;s planning register — it doesn&rsquo;t name the person, so the
+            letter opens &ldquo;Good morning/afternoon&rdquo;. If you know who it is, use <strong>Edit contact</strong>.
+          </p>
+        )}
+        {source === "lucy" && <p className="text-xs text-emerald-700">✓ Contact entered by you</p>}
+        {source === "web" && (
+          <p className="text-xs rounded border border-amber-300 bg-amber-50 text-amber-900 px-2 py-1">
+            Found by web search — the council register doesn&rsquo;t show the agent for this one. Check the
+            application before sending; if the agent is different, use <strong>Edit contact</strong>.
+          </p>
+        )}
+        {others > 0 && (
+          <p className="text-xs text-blue-700">
+            {others} other letter{others === 1 ? "" : "s"} waiting for this same address — you may want to send just one.
+          </p>
+        )}
+      </div>
+    );
+  };
 
   const renderLucyTools = (lead: ReadyLead) => (
     <div className="space-y-1.5">
@@ -332,6 +372,9 @@ export default function ReadyToSendPage() {
                       >
                         {lead.agentEmail}
                       </a>
+                      {contactSource(lead.contactNotes) === "web" && lead.contactNotes && (
+                        <p className="text-xs text-muted-foreground border-t pt-2">{lead.contactNotes}</p>
+                      )}
                       {renderLucyTools(lead)}
                       {renderApproachEmail(lead)}
                       <div className="flex flex-wrap items-center gap-2 pt-1">

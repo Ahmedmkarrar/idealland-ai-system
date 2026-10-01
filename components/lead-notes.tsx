@@ -15,6 +15,7 @@ import { followUpDue, formatSentDate, saveLeadEdits } from "@/lib/approach-state
 export interface NotableLead {
   id: string;
   agentName: string | null;
+  agentFirm: string | null;
   agentEmail: string | null;
   staffNote: string | null;
   followUpAt: string | null;
@@ -24,7 +25,7 @@ const dateInputValue = (value: string | null) => (value ? value.slice(0, 10) : "
 
 export function EditContact({ lead, onSaved }: { lead: NotableLead; onSaved: () => Promise<void> | void }) {
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState(lead.agentName ?? "");
+  const [name, setName] = useState(lead.agentName && lead.agentName !== lead.agentFirm ? lead.agentName : "");
   const [email, setEmail] = useState(lead.agentEmail ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -20,6 +20,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
 import { usableEmail } from "@/lib/email-address";
+import { ENTERED_BY_LUCY } from "@/lib/approach-state";
 import { councilReference } from "@/lib/planning-portals";
 import { formatAddress, timeGreeting } from "@/lib/approach-email";
 import {
@@ -608,14 +609,23 @@ export async function updateLeadDetails(
   }
   if (edits.note !== undefined) data.staffNote = text(edits.note);
   if (edits.followUpAt !== undefined) {
-    const date = edits.followUpAt ? new Date(edits.followUpAt) : null;
+    // A calendar day from the date picker, stored at midday UTC so it reads as the
+    // same day in London or on a laptop in another time zone.
+    const day = edits.followUpAt?.slice(0, 10);
+    const date = day ? new Date(`${day}T12:00:00Z`) : null;
     if (date && Number.isNaN(date.getTime())) return { ok: false, reason: "Invalid follow-up date" };
     data.followUpAt = date;
   }
   if (Object.keys(data).length === 0) return { ok: true };
 
   const contactChanged = edits.agentName !== undefined || edits.agentEmail !== undefined;
-  if (contactChanged && (data.agentName || data.agentEmail || app.agentFirm)) data.contactStatus = "found";
+  if (contactChanged) {
+    if (data.agentName || data.agentEmail || app.agentFirm) data.contactStatus = "found";
+    const earlier = app.contactNotes?.startsWith(ENTERED_BY_LUCY)
+      ? app.contactNotes.split(" — ").slice(1).join(" — ")
+      : app.contactNotes;
+    data.contactNotes = [`${ENTERED_BY_LUCY} ${new Date().toLocaleDateString("en-GB")}`, earlier].filter(Boolean).join(" — ");
+  }
 
   await prisma.planningApplication.update({ where: { id: applicationId }, data });
   if (contactChanged && app.approachBody && app.approachStatus !== "sent") {
