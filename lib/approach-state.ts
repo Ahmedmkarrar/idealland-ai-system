@@ -37,6 +37,33 @@ export async function updateApproach(applicationId: string, changes: ApproachCha
   return res.ok;
 }
 
+export type LeadEdits = {
+  agentName?: string | null;
+  agentEmail?: string | null;
+  note?: string | null;
+  followUpAt?: string | null;
+};
+
+/** Returns null on success, or the reason the server refused. */
+export async function saveLeadEdits(applicationId: string, edits: LeadEdits): Promise<string | null> {
+  const res = await fetch("/api/sourcing/approach", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applicationId, edits }),
+  });
+  if (res.ok) return null;
+  const data = await res.json().catch(() => ({}));
+  return data.reason ?? data.error ?? "Couldn't save";
+}
+
+/** A follow-up date that is today or already past. */
+export function followUpDue(value: string | null): boolean {
+  if (!value) return false;
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  return new Date(value) <= end;
+}
+
 export function formatSentDate(value: string | null): string {
   if (!value) return "date not recorded";
   return new Date(value).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });

@@ -123,6 +123,10 @@ model PlanningApplication {
   approachSentAt      DateTime?
   approachOutcome     String?  // null | "replied" | "interested" | "dead" | "won"
   approachOutcomeAt   DateTime?
+  // Lucy's own note on the site ("agent forwarded to owner", "call in a month")
+  // and the date she wants to pick it up again.
+  staffNote           String?
+  followUpAt          DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   documents   Document[]

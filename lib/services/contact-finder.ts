@@ -576,3 +576,50 @@ export async function setApproachState(
   await prisma.planningApplication.update({ where: { id: applicationId }, data });
   return { ok: true };
 }
+
+export interface LeadEdits {
+  agentName?: string | null;
+  agentEmail?: string | null;
+  note?: string | null;
+  followUpAt?: string | null;
+}
+
+/**
+ * Lucy's own corrections and notes. A name or email she types is taken as
+ * confirmed — she has read the application form, which the register reader
+ * can't (Reigate keeps it behind a captcha) — and an unsent letter is rewritten
+ * so its greeting follows. Sent letters are history; only the contact changes.
+ */
+export async function updateLeadDetails(
+  applicationId: string,
+  edits: LeadEdits
+): Promise<{ ok: boolean; reason?: string }> {
+  const app = await prisma.planningApplication.findUnique({ where: { id: applicationId } });
+  if (!app) return { ok: false, reason: "Application not found" };
+
+  const text = (v: string | null | undefined) => (v?.trim() ? v.trim() : null);
+  const data: Record<string, unknown> = {};
+
+  if (edits.agentName !== undefined) data.agentName = text(edits.agentName);
+  if (edits.agentEmail !== undefined) {
+    const typed = text(edits.agentEmail);
+    if (typed && !usableEmail(typed).email) return { ok: false, reason: "That doesn't look like a single email address" };
+    data.agentEmail = typed;
+  }
+  if (edits.note !== undefined) data.staffNote = text(edits.note);
+  if (edits.followUpAt !== undefined) {
+    const date = edits.followUpAt ? new Date(edits.followUpAt) : null;
+    if (date && Number.isNaN(date.getTime())) return { ok: false, reason: "Invalid follow-up date" };
+    data.followUpAt = date;
+  }
+  if (Object.keys(data).length === 0) return { ok: true };
+
+  const contactChanged = edits.agentName !== undefined || edits.agentEmail !== undefined;
+  if (contactChanged && (data.agentName || data.agentEmail || app.agentFirm)) data.contactStatus = "found";
+
+  await prisma.planningApplication.update({ where: { id: applicationId }, data });
+  if (contactChanged && app.approachBody && app.approachStatus !== "sent") {
+    await draftApproach(applicationId, { force: true });
+  }
+  return { ok: true };
+}

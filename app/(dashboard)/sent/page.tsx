@@ -14,10 +14,12 @@ import { planningApplicationLink, councilReference } from "@/lib/planning-portal
 import {
   OUTCOME_OPTIONS,
   cameBack,
+  followUpDue,
   formatSentDate,
   updateApproach,
   type ApproachChange,
 } from "@/lib/approach-state";
+import { EditContact, LeadNote } from "@/components/lead-notes";
 
 interface SentLead {
   id: string;
@@ -36,15 +38,25 @@ interface SentLead {
   approachStatus: string | null;
   approachSentAt: string | null;
   approachOutcome: string | null;
+  staffNote: string | null;
+  followUpAt: string | null;
 }
 
-type View = "all" | "waiting" | "came_back";
+type View = "all" | "waiting" | "came_back" | "follow_up";
 
 const VIEWS: ReadonlyArray<{ value: View; label: string }> = [
   { value: "all", label: "All" },
   { value: "waiting", label: "Waiting to hear" },
   { value: "came_back", label: "Came back to us" },
+  { value: "follow_up", label: "Follow-ups due" },
 ];
+
+function inView(lead: SentLead, view: View): boolean {
+  if (view === "came_back") return cameBack(lead.approachOutcome);
+  if (view === "waiting") return !cameBack(lead.approachOutcome);
+  if (view === "follow_up") return followUpDue(lead.followUpAt);
+  return true;
+}
 
 export default function SentPage() {
   const [leads, setLeads] = useState<SentLead[]>([]);
@@ -78,15 +90,16 @@ export default function SentPage() {
 
   const query = searchQuery.trim().toLowerCase();
   const visible = leads
-    .filter((l) => (view === "all" ? true : view === "came_back" ? cameBack(l.approachOutcome) : !cameBack(l.approachOutcome)))
+    .filter((l) => inView(l, view))
     .filter((l) =>
       query
-        ? [l.address, l.council, l.agentName, l.agentFirm, l.agentEmail]
+        ? [l.address, l.council, l.agentName, l.agentFirm, l.agentEmail, l.staffNote]
             .filter(Boolean)
             .some((f) => f!.toLowerCase().includes(query))
         : true
     );
 
+  const dueCount = leads.filter((l) => followUpDue(l.followUpAt)).length;
   const cameBackCount = leads.filter((l) => cameBack(l.approachOutcome)).length;
   const interestedCount = leads.filter((l) => l.approachOutcome === "interested" || l.approachOutcome === "won").length;
 
@@ -129,6 +142,9 @@ export default function SentPage() {
               }`}
             >
               {v.label}
+              {v.value === "follow_up" && dueCount > 0 && (
+                <span className="ml-1.5 rounded-full bg-red-100 text-red-700 px-1.5 text-xs font-semibold">{dueCount}</span>
+              )}
             </button>
           ))}
         </div>
@@ -202,6 +218,8 @@ export default function SentPage() {
                     {lead.agentPhone && <span className="text-muted-foreground"> · {lead.agentPhone}</span>}
                   </div>
 
+                  <LeadNote key={`n-${lead.id}-${lead.staffNote}-${lead.followUpAt}`} lead={lead} onSaved={fetchLeads} />
+
                   <div className="flex flex-wrap items-center gap-2 border-t pt-3">
                     {OUTCOME_OPTIONS.map((option) => {
                       const selected = lead.approachOutcome === option.value;
@@ -235,6 +253,7 @@ export default function SentPage() {
                       <ExternalLink className="w-3 h-3" />
                       {link.label}
                     </a>
+                    <EditContact key={`c-${lead.id}-${lead.agentName}-${lead.agentEmail}`} lead={lead} onSaved={fetchLeads} />
                     <Button
                       size="sm"
                       variant="ghost"

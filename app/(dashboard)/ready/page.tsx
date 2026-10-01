@@ -20,6 +20,7 @@ import { planningApplicationLink, councilReference, mapUrl } from "@/lib/plannin
 import { approachMailto, refreshGreeting } from "@/lib/approach-email";
 import { isCoveredCouncil } from "@/lib/coverage";
 import { cameBack, updateApproach, type ApproachChange } from "@/lib/approach-state";
+import { EditContact, LeadNote } from "@/components/lead-notes";
 
 interface ReadyLead {
   id: string;
@@ -43,6 +44,8 @@ interface ReadyLead {
   approachBody: string | null;
   approachStatus: string | null;
   approachOutcome: string | null;
+  staffNote: string | null;
+  followUpAt: string | null;
 }
 
 function scoreBadgeClass(score: number | null): string {
@@ -103,7 +106,7 @@ export default function ReadyToSendPage() {
 
   const matchesSearch = (lead: ReadyLead) =>
     searchQuery
-      ? [lead.address, lead.council, lead.agentName, lead.agentFirm]
+      ? [lead.address, lead.council, lead.agentName, lead.agentFirm, lead.staffNote]
           .filter(Boolean)
           .some((field) => field!.toLowerCase().includes(searchQuery.toLowerCase()))
       : true;
@@ -164,6 +167,13 @@ export default function ReadyToSendPage() {
         <span className="text-muted-foreground"> · {lead.agentFirm}</span>
       )}
       {lead.agentPhone && <span className="text-muted-foreground"> · {lead.agentPhone}</span>}
+    </div>
+  );
+
+  const renderLucyTools = (lead: ReadyLead) => (
+    <div className="space-y-1.5">
+      <LeadNote key={`n-${lead.id}-${lead.staffNote}-${lead.followUpAt}`} lead={lead} onSaved={fetchLeads} />
+      <EditContact key={`c-${lead.id}-${lead.agentName}-${lead.agentEmail}`} lead={lead} onSaved={fetchLeads} />
     </div>
   );
 
@@ -322,6 +332,7 @@ export default function ReadyToSendPage() {
                       >
                         {lead.agentEmail}
                       </a>
+                      {renderLucyTools(lead)}
                       {renderApproachEmail(lead)}
                       <div className="flex flex-wrap items-center gap-2 pt-1">
                         <a href={approachMailto(lead.agentEmail ?? "", lead.approachSubject, lead.approachBody)}>
@@ -383,6 +394,7 @@ export default function ReadyToSendPage() {
                       {lead.contactNotes && (
                         <p className="text-xs text-muted-foreground border-t pt-2">{lead.contactNotes}</p>
                       )}
+                      {renderLucyTools(lead)}
                       {renderApproachEmail(lead)}
                       <div className="flex flex-wrap gap-2 pt-1">
                         <Button size="sm" variant="outline" onClick={() => handleCopy(lead)}>

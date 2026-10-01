@@ -1,7 +1,13 @@
 // Draft the seller-approach email to the agent, or record what happened after
 // staff sent it (status/outcome).
 import { NextRequest, NextResponse } from "next/server";
-import { draftApproach, setApproachState, isApproachOutcome } from "@/lib/services/contact-finder";
+import {
+  draftApproach,
+  setApproachState,
+  isApproachOutcome,
+  updateLeadDetails,
+  type LeadEdits,
+} from "@/lib/services/contact-finder";
 import { applyRateLimit } from "@/lib/rate-limit";
 
 interface Body {
@@ -9,6 +15,7 @@ interface Body {
   force?: boolean;
   status?: "drafted" | "sent" | "not_sent";
   outcome?: string | null;
+  edits?: LeadEdits;
 }
 
 export async function POST(request: NextRequest) {
@@ -18,6 +25,12 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as Body;
   if (!body.applicationId) {
     return NextResponse.json({ error: "applicationId required" }, { status: 400 });
+  }
+
+  // Lucy's corrections to the contact, and her own note / follow-up date.
+  if (body.edits) {
+    const result = await updateLeadDetails(body.applicationId, body.edits);
+    return NextResponse.json(result, { status: result.ok ? 200 : 400 });
   }
 
   // Status/outcome update path (staff marking sent / recording a reply).
