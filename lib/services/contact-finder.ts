@@ -241,15 +241,23 @@ Return ONLY a JSON object, no prose:
   const rawEmail = clean(parsed.agentEmail);
   const { email: agentEmail, rejected: rejectedEmail } = usableEmail(rawEmail);
 
-  // The register outranks the researcher on who the agent is; the researcher
-  // only fills what the register left blank.
+  // Only the register says who the agent is. Web search finds the people who run
+  // a firm, not who filed the application: it put "Dear Joshua" (Tailored Living's
+  // director, from Companies House) on a letter whose agent was Matt Driscoll
+  // (Elmbridge 2025/3155, caught by Lucy 1 Oct 2026). A researched name is passed
+  // on as a note to check, and the letter opens with the time-of-day greeting.
+  const researchedName = clean(parsed.agentName);
+  const unconfirmedName =
+    !known.agentName && researchedName
+      ? `Web research suggests ${researchedName} — not named on the council register, so the letter does not address them; check the application before personalising.`
+      : null;
   const result: ContactResult = {
-    agentName: known.agentName ?? clean(parsed.agentName),
+    agentName: known.agentName,
     agentFirm: known.agentFirm ?? clean(parsed.agentFirm),
     agentEmail,
     agentPhone: known.agentPhone ?? clean(parsed.agentPhone),
     agentWebsite: clean(parsed.agentWebsite) ?? app.agentWebsite,
-    notes: [fromPortal?.source, clean(parsed.notes)].filter(Boolean).join(" — ") || null,
+    notes: [fromPortal?.source, clean(parsed.notes), unconfirmedName].filter(Boolean).join(" — ") || null,
     found: false,
   };
   // A guessed pattern isn't a contact — surface it as a lead to chase, never as a

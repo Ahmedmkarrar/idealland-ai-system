@@ -284,6 +284,54 @@ function parseNecsws(html: string): PortalContact | null {
 }
 
 // ---------------------------------------------------------------------------
+// Astun iShare (Elmbridge) — Contacts tab, `<dt>Agent Name :</dt><dd>Mr Steven Doel</dd>`
+// ---------------------------------------------------------------------------
+
+function isAstunUrl(url: string): boolean {
+  return /emaps\.elmbridge\.gov\.uk\/ebc_planning\.aspx/i.test(url);
+}
+
+/** The stored link opens the Details tab; the agent sits on the Contacts tab of the same template set. */
+export function astunContactsUrl(councilUrl: string): string | null {
+  if (!isAstunUrl(councilUrl)) return null;
+  const ref = decodeURIComponent(councilUrl).match(/appno:PARAM=([^&]+)/i)?.[1];
+  if (!ref) return null;
+  const base = new URL(councilUrl);
+  return `${base.origin}${base.pathname}?requesttype=parseTemplate&template=PlanningContactsTab.tmplt&Filter=^APPLICATION_NUMBER^=%27${encodeURIComponent(ref)}%27&appno:PARAM=${encodeURIComponent(ref)}`;
+}
+
+function definitionFields(html: string): Map<string, string> {
+  const fields = new Map<string, string>();
+  for (const row of html.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi)) {
+    const key = decode(row[1]).replace(/\s*:\s*$/, "").toLowerCase();
+    const value = decode(row[2]);
+    if (key && value && !fields.has(key)) fields.set(key, value);
+  }
+  return fields;
+}
+
+export function parseAstunContacts(html: string): PortalContact | null {
+  const fields = definitionFields(html);
+  const rawName = fields.get("agent name") ?? null;
+  const address = fields.get("agent address") ?? null;
+  const phone = fields.get("phone number") ?? null;
+
+  // The practice, when there is one, opens the agent's address
+  // ("Denton Homes Limited,1st Floor Offices,…").
+  const name = looksLikeFirm(rawName) ? null : cleanAgentName(rawName);
+  const firm = (looksLikeFirm(rawName) ? rawName : null) ?? firmFromText(address?.split(",")[0] ?? null);
+  if (!name && !firm && !phone) return null;
+
+  return {
+    agentName: name,
+    agentFirm: firm,
+    agentEmail: null,
+    agentPhone: phone,
+    source: "Council planning register (contacts tab)",
+  };
+}
+
+// ---------------------------------------------------------------------------
 
 /** Two partial reads of the same application, the first one winning where both have a value. */
 function mergeContacts(primary: PortalContact | null, secondary: PortalContact | null): PortalContact | null {
@@ -332,15 +380,20 @@ export async function extractContactFromPortal(
     return html ? parseNecsws(html) : null;
   }
 
-  // Other platforms (Merton's bot-challenged register, Elmbridge's map portal,
-  // Mole Valley's horizoNext) render contacts behind JavaScript or a challenge;
+  if (isAstunUrl(url)) {
+    const contactsUrl = astunContactsUrl(url);
+    const html = contactsUrl ? await fetchHtml(contactsUrl) : null;
+    return html ? parseAstunContacts(html) : null;
+  }
+
+  // Other platforms (Merton's bot-challenged register, Mole Valley's horizoNext) render contacts behind JavaScript or a challenge;
   // they stay on the AI path.
   return null;
 }
 
 /** True when this lead sits on a platform we can read directly. */
 export function isSupportedPortal(councilUrl: string | null | undefined): boolean {
-  return !!councilUrl && (isIdoxUrl(councilUrl) || isNorthgateUrl(councilUrl) || isNecswsUrl(councilUrl));
+  return !!councilUrl && (isIdoxUrl(councilUrl) || isNorthgateUrl(councilUrl) || isNecswsUrl(councilUrl) || isAstunUrl(councilUrl));
 }
 
 /**
