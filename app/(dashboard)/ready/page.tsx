@@ -20,7 +20,7 @@ import { planningApplicationLink, councilReference, mapUrl } from "@/lib/plannin
 import { addressLooksIncomplete, approachMailto, refreshGreeting } from "@/lib/approach-email";
 import { isCoveredCouncil } from "@/lib/coverage";
 import { cameBack, contactSource, formatSentDate, updateApproach, type ApproachChange } from "@/lib/approach-state";
-import { EditContact, LeadNote } from "@/components/lead-notes";
+import { EditContact, LeadNote, ReportProblem } from "@/components/lead-notes";
 import { freshLabel, freshPermissionAge } from "@/lib/fresh-permission";
 
 interface ReadyLead {
@@ -280,6 +280,7 @@ export default function ReadyToSendPage() {
     <div className="space-y-1.5">
       <LeadNote key={`n-${lead.id}-${lead.staffNote}-${lead.followUpAt}`} lead={lead} onSaved={fetchLeads} />
       <EditContact key={`c-${lead.id}-${lead.agentName}-${lead.agentEmail}`} lead={lead} onSaved={fetchLeads} />
+      <ReportProblem leadId={lead.id} />
     </div>
   );
 

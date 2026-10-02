@@ -19,7 +19,7 @@ import {
   updateApproach,
   type ApproachChange,
 } from "@/lib/approach-state";
-import { EditContact, LeadNote } from "@/components/lead-notes";
+import { EditContact, LeadNote, ReportProblem } from "@/components/lead-notes";
 
 interface SentLead {
   id: string;
@@ -254,6 +254,7 @@ export default function SentPage() {
                       {link.label}
                     </a>
                     <EditContact key={`c-${lead.id}-${lead.agentName}-${lead.agentEmail}`} lead={lead} onSaved={fetchLeads} />
+                    <ReportProblem leadId={lead.id} />
                     <Button
                       size="sm"
                       variant="ghost"

@@ -105,7 +105,11 @@ export async function runSelfCheck(): Promise<SelfCheckResult> {
 
   // The other automations, as the Error Log already records them.
   const failedRuns = await prisma.automationRun.findMany({
-    where: { status: "failed", type: { not: "self-check" }, startedAt: { gt: new Date(Date.now() - 24 * 3600_000) } },
+    where: {
+      status: "failed",
+      type: { notIn: ["self-check", "reported-by-lucy"] },
+      startedAt: { gt: new Date(Date.now() - 24 * 3600_000) },
+    },
     select: { type: true },
   });
   for (const type of new Set(failedRuns.map((r) => r.type))) issues.push(`The ${type} job failed in the last 24 hours`);

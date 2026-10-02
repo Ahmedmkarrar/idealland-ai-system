@@ -9,7 +9,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { CalendarClock, Pencil, StickyNote } from "lucide-react";
+import { CalendarClock, Flag, Pencil, StickyNote } from "lucide-react";
 import { followUpDue, formatSentDate, saveLeadEdits } from "@/lib/approach-state";
 
 export interface NotableLead {
@@ -140,6 +140,54 @@ export function LeadNote({ lead, onSaved }: { lead: NotableLead; onSaved: () => 
           {saving ? "Saving…" : "Save note"}
         </Button>
         <Button size="sm" variant="ghost" onClick={() => setOpen(false)} disabled={saving}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export function ReportProblem({ leadId }: { leadId: string }) {
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState("");
+  const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+
+  if (state === "sent") {
+    return <p className="text-xs text-emerald-700 px-2">Thanks — sent to Ahmed with this site attached.</p>;
+  }
+  if (!open) {
+    return (
+      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground" onClick={() => setOpen(true)}>
+        <Flag className="w-3 h-3 mr-1" />
+        Report a problem
+      </Button>
+    );
+  }
+
+  const send = async () => {
+    setState("sending");
+    const res = await fetch("/api/report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ applicationId: leadId, message }),
+    });
+    setState(res.ok ? "sent" : "error");
+  };
+
+  return (
+    <div className="rounded border bg-muted/30 p-3 space-y-2 max-w-xl">
+      <Textarea
+        rows={3}
+        placeholder="What's wrong? e.g. the agent on the application is someone else · wrong number of units"
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+      />
+      {state === "error" && <p className="text-xs text-red-600">Couldn&rsquo;t send — please try again.</p>}
+      <div className="flex gap-2">
+        <Button size="sm" onClick={send} disabled={state === "sending" || !message.trim()}>
+          {state === "sending" ? "Sending…" : "Send to Ahmed"}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setOpen(false)} disabled={state === "sending"}>
           Cancel
         </Button>
       </div>
