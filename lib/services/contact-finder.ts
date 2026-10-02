@@ -381,7 +381,7 @@ function writingToApplicant(app: { agentName: string | null; agentFirm: string |
   return [app.agentName, app.agentFirm].some((name) => !!name && comparable(name) === applicant);
 }
 
-function buildApproachEmail(app: {
+export function buildApproachEmail(app: {
   agentName: string | null;
   agentFirm: string | null;
   applicant: string | null;

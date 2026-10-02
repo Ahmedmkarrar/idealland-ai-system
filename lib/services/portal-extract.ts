@@ -66,6 +66,12 @@ export class PortalBusyError extends Error {
 
 const isBusy = (status: number) => status === 429 || status === 503;
 
+/** No answer in time, or no connection at all — the register, not the application. */
+function isUnreachable(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.name === "TimeoutError" || error.name === "AbortError" || (error instanceof TypeError && error.message === "fetch failed");
+}
+
 async function fetchHtml(url: string): Promise<string | null> {
   let res: Response;
   try {
@@ -81,6 +87,10 @@ async function fetchHtml(url: string): Promise<string | null> {
     }, 1);
   } catch (error) {
     if (error instanceof PortalBusyError) throw error;
+    // A register that doesn't answer in time is down or throttling us (Kingston
+    // goes silent after a burst). Reading that as "no agent on the page" sent
+    // leads to web search and the self-check reported agents as vanished.
+    if (isUnreachable(error)) throw new PortalBusyError(504);
     return null;
   }
   if (isBusy(res.status)) throw new PortalBusyError(res.status);
@@ -497,9 +507,7 @@ export async function resolveIdoxApplicationUrl(council: string, reference: stri
       : null;
   } catch (error) {
     if (error instanceof PortalBusyError) throw error;
-    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
-      throw new PortalBusyError(504);
-    }
+    if (isUnreachable(error)) throw new PortalBusyError(504);
     return null;
   }
 }

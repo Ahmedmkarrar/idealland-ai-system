@@ -3,6 +3,7 @@ import { applyRateLimit } from "@/lib/rate-limit";
 import { sendDailyDigest } from "@/lib/services/email";
 import { sendTelegramDigest } from "@/lib/services/telegram";
 import { bulkFindContacts } from "@/lib/services/contact-finder";
+import { runSelfCheck } from "@/lib/services/self-check";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -41,6 +42,12 @@ export async function GET(request: NextRequest) {
           }).catch((e) => ({ error: e instanceof Error ? e.message : "contact research failed" }))
         : { skipped: "CONTACT_DAILY_LIMIT=0" };
 
+    // After research, so the letters it just wrote are checked too, and before
+    // the digest, so anything rewritten is current when Lucy opens the page.
+    const selfCheck = await runSelfCheck().catch((e) => ({
+      error: e instanceof Error ? e.message : "self-check failed",
+    }));
+
     const [telegram, email] = await Promise.allSettled([
       sendTelegramDigest(),
       sendDailyDigest(),
@@ -50,6 +57,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       ran: new Date().toISOString(),
       contacts,
+      selfCheck,
       telegram: pick(telegram),
       email: pick(email),
     });
