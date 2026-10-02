@@ -16,21 +16,25 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function main(): Promise<void> {
   const dry = process.argv.includes("--dry");
-  const leads = await prisma.planningApplication.findMany({
-    where: {
-      reference: { startsWith: "PlanIt-" },
-      agentFirm: { not: null },
-      NOT: [{ approachStatus: "sent" }, { contactNotes: { contains: "Council planning register" } }],
-    },
-    select: { id: true, reference: true, council: true, lpaReference: true, agentFirm: true, contactNotes: true },
-  });
+  const leads = (
+    await prisma.planningApplication.findMany({
+      where: { reference: { startsWith: "PlanIt-" }, agentFirm: { not: null }, approachStatus: "drafted" },
+      select: { id: true, reference: true, council: true, lpaReference: true, agentFirm: true, contactNotes: true },
+    })
+  ).filter((lead) => !lead.contactNotes?.includes("Council planning register"));
   let marked = 0;
   for (const lead of leads) {
     const authority = AUTHORITY[lead.council];
     if (!authority || !lead.lpaReference) continue;
-    const res = await fetch(`https://www.planit.org.uk/planapplic/${authority}/${lead.lpaReference}/geojson`);
+    const res = await fetch(`https://www.planit.org.uk/planapplic/${authority}/${lead.lpaReference}/geojson`, {
+      headers: { "User-Agent": "IdealLand sourcing (admin@idealland.co.uk)", Accept: "application/json" },
+      signal: AbortSignal.timeout(20000),
+    }).catch(() => null);
     await sleep(1000);
-    if (!res.ok) continue;
+    if (!res?.ok) {
+      console.log(`skipped\t${lead.reference}\tPlanIt HTTP ${res?.status ?? "error"}`);
+      continue;
+    }
     const fields = (await res.json())?.properties?.other_fields ?? {};
     const planitFirm: string | undefined = fields.agent_company ?? fields.agent_address?.split(",")[0];
     const match = comparable(planitFirm) && comparable(planitFirm) === comparable(lead.agentFirm);
