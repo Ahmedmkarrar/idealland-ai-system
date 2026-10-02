@@ -21,6 +21,7 @@ import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
 import { usableEmail } from "@/lib/email-address";
 import { ENTERED_BY_LUCY } from "@/lib/approach-state";
+import { findEmailOnWebsite, guessWebsites } from "@/lib/services/website-email";
 import { councilReference } from "@/lib/planning-portals";
 import { formatAddress, timeGreeting } from "@/lib/approach-email";
 import {
@@ -119,6 +120,25 @@ async function saveContact(applicationId: string, result: ContactResult): Promis
 
 const PLANIT_SOURCE = "Council planning register (via PlanIt)";
 
+/**
+ * The practice's inbox from its own website: the one on file, else the obvious
+ * addresses for its name. Null when the practice isn't known or no site names it.
+ */
+export async function emailFromPracticeWebsite(
+  website: string | null,
+  firm: string | null,
+  agentName: string | null
+): Promise<{ email: string; website: string; note: string } | null> {
+  if (!firm) return null;
+  // The site on file can be stale (Marrons, on a lead the register gives to JLA),
+  // so the guesses are still tried after it.
+  for (const site of [...(website ? [website] : []), ...guessWebsites(firm)]) {
+    const hit = await findEmailOnWebsite(site, firm, agentName);
+    if (hit) return { email: hit.email, website: site, note: `Email from the practice's website (${hit.page})` };
+  }
+  return null;
+}
+
 export async function findAgentContact(
   applicationId: string,
   options?: { force?: boolean }
@@ -185,6 +205,21 @@ export async function findAgentContact(
       ? PLANIT_SOURCE
       : null;
   const registerSource = fromPortal?.source ?? ingestSource;
+
+  // The practice's own website before a paid web search: it is where the
+  // researcher would look anyway, and it can't confuse one practice for another.
+  const fromWebsite = await emailFromPracticeWebsite(app.agentWebsite, known.agentFirm, known.agentName);
+  if (fromWebsite) {
+    const result = {
+      ...known,
+      agentEmail: fromWebsite.email,
+      agentWebsite: app.agentWebsite ?? fromWebsite.website,
+      notes: [registerSource, fromWebsite.note].filter(Boolean).join(" — "),
+      found: true,
+    };
+    await saveContact(applicationId, result);
+    return { ok: true, result };
+  }
 
   if (!isClaudeConfigured()) {
     if (known.agentName || known.agentFirm) {
@@ -288,6 +323,14 @@ Return ONLY a JSON object, no prose:
     ]
       .filter(Boolean)
       .join(" ");
+  }
+  // The researcher often finds the practice's site but not the address on it.
+  if (!result.agentEmail && result.agentWebsite) {
+    const fromSite = await emailFromPracticeWebsite(result.agentWebsite, result.agentFirm, result.agentName);
+    if (fromSite) {
+      result.agentEmail = fromSite.email;
+      result.notes = [result.notes, fromSite.note].filter(Boolean).join(" — ");
+    }
   }
   // "Found" means we have something actionable to reach a human with.
   result.found = !!(result.agentEmail || result.agentName || result.agentFirm);
