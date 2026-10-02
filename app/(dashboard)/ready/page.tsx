@@ -21,6 +21,7 @@ import { addressLooksIncomplete, approachMailto, refreshGreeting } from "@/lib/a
 import { isCoveredCouncil } from "@/lib/coverage";
 import { cameBack, contactSource, formatSentDate, updateApproach, type ApproachChange } from "@/lib/approach-state";
 import { EditContact, LeadNote } from "@/components/lead-notes";
+import { freshLabel, freshPermissionAge } from "@/lib/fresh-permission";
 
 interface ReadyLead {
   id: string;
@@ -105,7 +106,13 @@ export default function ReadyToSendPage() {
     setLeads(
       applications
         .filter((a) => a.contactStatus === "found" && a.approachBody)
-        .sort((a, b) => (b.leadScore ?? -1) - (a.leadScore ?? -1))
+        // Fresh permissions first, newest first; then by score.
+        .sort((a, b) => {
+          const fa = freshPermissionAge(a);
+          const fb = freshPermissionAge(b);
+          if (fa !== null || fb !== null) return (fa ?? Infinity) - (fb ?? Infinity);
+          return (b.leadScore ?? -1) - (a.leadScore ?? -1);
+        })
     );
     setSentByAgent(sentLettersByAgent(applications));
     setIsLoading(false);
@@ -173,6 +180,13 @@ export default function ReadyToSendPage() {
         {lead.leadScore ?? "—"}
       </span>
       <div className="min-w-0 flex-1">
+        {freshPermissionAge(lead) !== null && (
+          <p className="mb-1">
+            <span className="inline-flex items-center rounded-full bg-emerald-600 text-white text-xs font-semibold px-2 py-0.5">
+              New permission — {freshLabel(freshPermissionAge(lead)!)}
+            </span>
+          </p>
+        )}
         <p className="font-medium text-sm flex items-start gap-1.5">
           <MapPin className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
           <span>{lead.address}</span>

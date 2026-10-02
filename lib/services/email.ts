@@ -2,6 +2,7 @@ import { Resend } from "resend";
 import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
 import { inCoverage } from "@/lib/coverage";
+import { FRESH_PERMISSION_DAYS, freshLabel, freshPermissionAge } from "@/lib/fresh-permission";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -90,6 +91,36 @@ export async function sendDailyDigest(): Promise<{ sent: boolean; count: number;
     orderBy: [{ createdAt: "desc" }],
   });
 
+  // Letters ready to go for sites approved in the last few weeks — the ones to
+  // send first. Listed above the new finds so they aren't missed.
+  const freshLetters = (
+    await prisma.planningApplication.findMany({
+      where: {
+        ...inCoverage,
+        status: "decided",
+        contactStatus: "found",
+        approachStatus: "drafted",
+        publicOwner: false,
+        decidedAt: { gte: new Date(Date.now() - FRESH_PERMISSION_DAYS * 86_400_000) },
+      },
+      orderBy: { decidedAt: "desc" },
+    })
+  ).filter((app) => freshPermissionAge(app) !== null);
+  const freshSection = freshLetters.length
+    ? `<div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:16px 18px;margin-bottom:20px">
+         <p style="margin:0 0 8px;font-size:15px;font-weight:bold;color:#065f46">
+           ${freshLetters.length} letter${freshLetters.length > 1 ? "s" : ""} ready for sites with new planning permission — best sent first:
+         </p>
+         ${freshLetters
+           .map(
+             (app) =>
+               `<p style="margin:4px 0;font-size:13px;color:#064e3b">${app.address} · ${app.units} unit${app.units === 1 ? "" : "s"} · ${freshLabel(freshPermissionAge(app)!)}</p>`
+           )
+           .join("")}
+         <p style="margin:8px 0 0;font-size:12px;color:#047857">They're at the top of the Ready to Send page.</p>
+       </div>`
+    : "";
+
   // Highest-scoring leads first; unscored apps sink to the bottom.
   const ranked = [...apps].sort((a, b) => (b.leadScore ?? 0) - (a.leadScore ?? 0));
   const count = ranked.length;
@@ -123,17 +154,19 @@ export async function sendDailyDigest(): Promise<{ sent: boolean; count: number;
     })
     .join("");
 
-  const body = count > 0
+  const body = freshSection + (count > 0
     ? `<p style="color:#334155;font-size:15px">
          Overnight the system surfaced <strong>${count}</strong> new live opportunit${count > 1 ? "ies" : "y"}, ranked by lead score:
        </p>${cards}`
     : `<p style="color:#475569;font-size:15px">
          No new qualifying opportunities in the last 24 hours. The system scanned your areas as scheduled — a quiet night, not a fault. You'll get the next find as soon as one lands.
-       </p>`;
+       </p>`);
 
   const subject = count > 0
     ? `☀️ IdealLand daily digest — ${count} new opportunit${count > 1 ? "ies" : "y"}`
-    : `☀️ IdealLand daily digest — quiet night`;
+    : freshLetters.length > 0
+      ? `☀️ IdealLand daily digest — ${freshLetters.length} letter${freshLetters.length > 1 ? "s" : ""} for new permissions`
+      : `☀️ IdealLand daily digest — quiet night`;
 
   const html = `
     <div style="font-family:sans-serif;max-width:700px;margin:0 auto">
