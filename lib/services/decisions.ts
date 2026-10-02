@@ -1,143 +1,113 @@
 import { prisma } from "@/lib/db/client";
 import { sendDecisionAlert } from "@/lib/services/email";
-import { withRetry } from "@/lib/retry";
-import * as cheerio from "cheerio";
-import { IDOX_COUNCIL_DOMAIN_MAP } from "@/lib/constants/councils";
+import { draftApproach } from "@/lib/services/contact-finder";
+import { PLD_SEARCH_URL, parseUkDate } from "@/lib/services/sourcing";
 import { inCoverage } from "@/lib/coverage";
 
-const DECISION_STATUS_MAP: Record<string, string> = {
-  "application permitted": "approved",
-  "permission granted": "approved",
-  "conditionally permitted": "approved",
-  "conditional permission": "approved",
-  "approved with conditions": "approved",
-  "approved": "approved",
-  "grant of planning permission": "approved",
-  "planning permission granted": "approved",
-  "application refused": "refused",
-  "refused": "refused",
-  "refusal of planning permission": "refused",
-  "planning permission refused": "refused",
-  "rejection": "refused",
-  "withdrawn": "withdrawn",
-  "application withdrawn": "withdrawn",
-  "appeal allowed": "approved",
-  "appeal dismissed": "refused",
-};
+// Keeping London leads' decisions current.
+//
+// London leads come from the Planning London DataHub, and a lead used to keep
+// whatever status it had on the day it was imported. The old checker scraped
+// Idox with our internal id as the keyVal, so it never matched an application
+// and re-checked the same 50 leads every run. On 1 Oct 2026 twelve of the 27
+// London letters waiting on the Ready page were for applications the council had
+// since decided — nine approved, so the letter said "I came across the
+// application" instead of "your client has received planning permission".
+//
+// The DataHub carries the council's decision, so it is asked directly for every
+// undecided London lead. Surrey leads are refreshed from PlanIt in planit.ts.
 
-const COUNCIL_DOMAIN_MAP = IDOX_COUNCIL_DOMAIN_MAP;
+const PLD_BATCH = 300;
+// The DataHub's placeholder while an application is still open.
+const UNDECIDED = /^(unknown|application (received|under consideration)|pending|registered)$/i;
 
-async function scrapeApplicationStatus(
-  council: string,
-  reference: string
-): Promise<string | null> {
-  const domain = COUNCIL_DOMAIN_MAP[council];
-  if (!domain) return null;
-
-  try {
-    const url = `https://${domain}/online-applications/applicationDetails.do?keyVal=${encodeURIComponent(reference)}&activeTab=summary`;
-    const response = await withRetry(() =>
-      fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; planning-monitor/1.0)" },
-        signal: AbortSignal.timeout(10000),
-      })
-    );
-
-    if (!response.ok) return null;
-
-    const html = await response.text();
-    const $ = cheerio.load(html);
-
-    // Collect all candidate text from known status containers across Idox variants
-    const candidateSelectors = [
-      "span.statusType",
-      ".statusType",
-      "td.statusType",
-      "#applicationStatus",
-      ".decision-status",
-      "th:contains('Status') + td",
-      "th:contains('Decision') + td",
-      "td:contains('Status') + td",
-      "td:contains('Decision') + td",
-      "label:contains('Status') + span",
-      "label:contains('Decision') + span",
-      ".applicationDetails tr:contains('Status') td:last-child",
-      ".applicationDetails tr:contains('Decision') td:last-child",
-    ];
-
-    for (const selector of candidateSelectors) {
-      const text = $(selector).first().text().trim().toLowerCase();
-      if (!text) continue;
-      for (const [keyword, mapped] of Object.entries(DECISION_STATUS_MAP)) {
-        if (text.includes(keyword)) return mapped;
-      }
-    }
-
-    // Fallback: scan full page body for decision keywords (less precise but catches edge cases)
-    const bodyText = $("body").text().toLowerCase();
-    const decisionSection = bodyText.substring(
-      Math.max(0, bodyText.indexOf("decision")),
-      Math.min(bodyText.length, bodyText.indexOf("decision") + 300)
-    );
-    for (const [keyword, mapped] of Object.entries(DECISION_STATUS_MAP)) {
-      if (decisionSection.includes(keyword)) return mapped;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
+interface PldDecision {
+  id: string;
+  decision?: string | null;
+  decision_date?: string | null;
 }
 
-export async function checkDecisions(): Promise<{ checked: number; changed: number }> {
+async function fetchDecisions(ids: string[]): Promise<PldDecision[]> {
+  const res = await fetch(PLD_SEARCH_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      size: ids.length,
+      _source: ["id", "decision", "decision_date"],
+      query: { bool: { filter: [{ terms: { id: ids } }] } },
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) throw new Error(`Planning London DataHub returned ${res.status}`);
+  const data = (await res.json()) as { hits?: { hits?: Array<{ _source?: PldDecision }> } };
+  return (data.hits?.hits ?? []).map((h) => h._source).filter((s): s is PldDecision => !!s?.id);
+}
+
+/**
+ * Record what the council decided on every undecided London lead we still care
+ * about, and rewrite any unsent letter so its wording follows the decision.
+ * `alert: false` skips the per-decision email, for a backlog catch-up.
+ */
+export async function checkDecisions(options?: { alert?: boolean }): Promise<{
+  checked: number;
+  changed: number;
+  redrafted: number;
+}> {
+  const alert = options?.alert ?? true;
   const runRecord = await prisma.automationRun.create({
     data: { type: "decisions", status: "running" },
   });
 
   try {
-    const pendingApplications = await prisma.planningApplication.findMany({
-      where: { ...inCoverage, status: "submitted", decisionAlertSent: false },
-      orderBy: { submittedAt: "asc" },
-      take: 50,
+    const pending = await prisma.planningApplication.findMany({
+      where: {
+        NOT: [{ status: "decided" }, { reference: { startsWith: "PlanIt-" } }],
+        OR: [inCoverage, { approachStatus: { not: null } }],
+      },
+      select: {
+        id: true, reference: true, address: true, council: true, units: true, status: true,
+        approachStatus: true, approachBody: true,
+      },
     });
 
-    let checked = 0;
     let changed = 0;
+    let redrafted = 0;
+    for (let i = 0; i < pending.length; i += PLD_BATCH) {
+      const batch = pending.slice(i, i + PLD_BATCH);
+      const decisions = new Map((await fetchDecisions(batch.map((a) => a.reference))).map((d) => [d.id, d]));
 
-    for (const app of pendingApplications) {
-      const newStatus = await scrapeApplicationStatus(app.council, app.reference);
-      checked++;
+      for (const app of batch) {
+        const decision = decisions.get(app.reference)?.decision?.trim();
+        if (!decision || UNDECIDED.test(decision)) continue;
 
-      if (!newStatus || newStatus === app.status) continue;
-
-      await prisma.applicationStatusChange.create({
-        data: {
-          applicationId: app.id,
-          fromStatus: app.status,
-          toStatus: newStatus,
-          alertSent: false,
-        },
-      });
-
-      await prisma.planningApplication.update({
-        where: { id: app.id },
-        data: {
-          status: newStatus,
-          decidedAt: ["approved", "refused", "withdrawn"].includes(newStatus) ? new Date() : null,
-          decisionAlertSent: true,
-        },
-      });
-
-      await sendDecisionAlert({
-        reference: app.reference,
-        address: app.address,
-        council: app.council,
-        units: app.units,
-        fromStatus: app.status,
-        toStatus: newStatus,
-      });
-
-      changed++;
+        await prisma.applicationStatusChange.create({
+          data: { applicationId: app.id, fromStatus: app.status, toStatus: "decided", alertSent: alert },
+        });
+        await prisma.planningApplication.update({
+          where: { id: app.id },
+          data: {
+            status: "decided",
+            decision,
+            decidedAt: parseUkDate(decisions.get(app.reference)?.decision_date) ?? new Date(),
+            decisionAlertSent: true,
+          },
+        });
+        if (app.approachBody && app.approachStatus !== "sent") {
+          const result = await draftApproach(app.id, { force: true });
+          if (result.ok) redrafted++;
+        }
+        if (alert) {
+          await sendDecisionAlert({
+            reference: app.reference,
+            address: app.address,
+            council: app.council,
+            units: app.units,
+            fromStatus: app.status,
+            toStatus: /approv|grant|permit/i.test(decision) ? "approved" : /refus/i.test(decision) ? "refused" : decision.toLowerCase(),
+          });
+        }
+        changed++;
+      }
     }
 
     await prisma.automationRun.update({
@@ -145,11 +115,11 @@ export async function checkDecisions(): Promise<{ checked: number; changed: numb
       data: {
         status: "completed",
         completedAt: new Date(),
-        summary: `Checked ${checked} pending applications. ${changed} decision${changed === 1 ? "" : "s"} detected.`,
+        summary: `Checked ${pending.length} undecided London applications. ${changed} decision${changed === 1 ? "" : "s"} recorded, ${redrafted} unsent letter${redrafted === 1 ? "" : "s"} rewritten.`,
       },
     });
 
-    return { checked, changed };
+    return { checked: pending.length, changed, redrafted };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await prisma.automationRun.update({

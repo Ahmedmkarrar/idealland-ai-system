@@ -47,7 +47,7 @@ const AUTO_OUTREACH_ENABLED = process.env.PLANNING_AUTO_OUTREACH === "true";
 // Docs: https://www.london.gov.uk/programmes-strategies/planning/digital-planning/planning-london-datahub
 // ---------------------------------------------------------------------------
 const PLD_BASE_URL = "https://planningdata.london.gov.uk";
-const PLD_SEARCH_URL = `${PLD_BASE_URL}/api-guest/applications/_search`;
+export const PLD_SEARCH_URL = `${PLD_BASE_URL}/api-guest/applications/_search`;
 const PLD_PAGE_SIZE = 250;
 const PLD_MAX_RECORDS = Number(process.env.PLANNING_MAX_RECORDS ?? 2000);
 const PLD_PROPOSED_UNITS_FIELD =
@@ -98,7 +98,7 @@ export interface PldSource {
 // PLD dates come as dd/mm/yyyy (valid_date, decision_date) or ISO
 // (last_updated). Returns undefined on anything unparseable so the caller can
 // fall back to another field.
-function parseUkDate(value?: string | null): Date | undefined {
+export function parseUkDate(value?: string | null): Date | undefined {
   if (!value) return undefined;
   const uk = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (uk) {

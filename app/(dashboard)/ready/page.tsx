@@ -19,7 +19,7 @@ import { isUsableEmail } from "@/lib/email-address";
 import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
 import { addressLooksIncomplete, approachMailto, refreshGreeting } from "@/lib/approach-email";
 import { isCoveredCouncil } from "@/lib/coverage";
-import { cameBack, contactSource, updateApproach, type ApproachChange } from "@/lib/approach-state";
+import { cameBack, contactSource, formatSentDate, updateApproach, type ApproachChange } from "@/lib/approach-state";
 import { EditContact, LeadNote } from "@/components/lead-notes";
 
 interface ReadyLead {
@@ -47,6 +47,8 @@ interface ReadyLead {
   staffNote: string | null;
   followUpAt: string | null;
   publicOwner: boolean;
+  decision: string | null;
+  decidedAt: string | null;
 }
 
 function scoreBadgeClass(score: number | null): string {
@@ -156,7 +158,16 @@ export default function ReadyToSendPage() {
           <span>{lead.address}</span>
         </p>
         <p className="text-xs text-muted-foreground mt-0.5">
-          {lead.council} · {lead.units} unit{lead.units === 1 ? "" : "s"} · {lead.status} ·{" "}
+          {lead.council} · {lead.units} unit{lead.units === 1 ? "" : "s"} ·{" "}
+          {lead.status === "decided" && lead.decision ? (
+            <span className={/approv|grant|permit/i.test(lead.decision) ? "text-emerald-700" : "text-red-700 font-semibold"}>
+              {lead.decision}
+              {lead.decidedAt && ` ${formatSentDate(lead.decidedAt)}`}
+            </span>
+          ) : (
+            lead.status
+          )}{" "}
+          ·{" "}
           {/* The council's own ref, not our internal document id — this is the one
               that works in a planning search. */}
           <a
