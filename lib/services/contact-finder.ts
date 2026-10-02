@@ -117,6 +117,8 @@ async function saveContact(applicationId: string, result: ContactResult): Promis
   });
 }
 
+const PLANIT_SOURCE = "Council planning register (via PlanIt)";
+
 export async function findAgentContact(
   applicationId: string,
   options?: { force?: boolean }
@@ -167,11 +169,18 @@ export async function findAgentContact(
   // What is already known before searching: the practice the register named, or
   // the agent details a Surrey council published through PlanIt at ingest.
   const known = withKnownDetails(fromPortal, app);
+  // PlanIt relays the council's own agent fields, so a practice it supplied is
+  // register data, not a web find, and the card should say so.
+  const ingestSource =
+    !fromPortal && !app.contactStatus && app.reference.startsWith("PlanIt-") && (app.agentFirm || app.agentName)
+      ? PLANIT_SOURCE
+      : null;
+  const registerSource = fromPortal?.source ?? ingestSource;
 
   if (!isClaudeConfigured()) {
     if (known.agentName || known.agentFirm) {
-      await saveContact(applicationId, { ...known, agentWebsite: app.agentWebsite, notes: fromPortal?.source ?? null, found: true });
-      return { ok: true, result: { ...known, agentWebsite: app.agentWebsite, notes: fromPortal?.source ?? null, found: true } };
+      await saveContact(applicationId, { ...known, agentWebsite: app.agentWebsite, notes: registerSource, found: true });
+      return { ok: true, result: { ...known, agentWebsite: app.agentWebsite, notes: registerSource, found: true } };
     }
     return { ok: false, reason: "ANTHROPIC_API_KEY not configured" };
   }
@@ -225,7 +234,7 @@ Return ONLY a JSON object, no prose:
 
   if (!parsed) {
     if (known.agentName || known.agentFirm) {
-      const result = { ...known, agentWebsite: app.agentWebsite, notes: fromPortal?.source ?? null, found: true };
+      const result = { ...known, agentWebsite: app.agentWebsite, notes: registerSource, found: true };
       await saveContact(applicationId, result);
       return { ok: true, result };
     }
@@ -258,7 +267,7 @@ Return ONLY a JSON object, no prose:
     agentEmail,
     agentPhone: known.agentPhone ?? clean(parsed.agentPhone),
     agentWebsite: clean(parsed.agentWebsite) ?? app.agentWebsite,
-    notes: [fromPortal?.source, clean(parsed.notes), unconfirmedName].filter(Boolean).join(" — ") || null,
+    notes: [registerSource, clean(parsed.notes), unconfirmedName].filter(Boolean).join(" — ") || null,
     found: false,
   };
   // A guessed pattern isn't a contact — surface it as a lead to chase, never as a

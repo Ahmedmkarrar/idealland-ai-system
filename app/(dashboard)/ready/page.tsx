@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { isUsableEmail } from "@/lib/email-address";
 import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
-import { approachMailto, refreshGreeting } from "@/lib/approach-email";
+import { addressLooksIncomplete, approachMailto, refreshGreeting } from "@/lib/approach-email";
 import { isCoveredCouncil } from "@/lib/coverage";
 import { cameBack, contactSource, updateApproach, type ApproachChange } from "@/lib/approach-state";
 import { EditContact, LeadNote } from "@/components/lead-notes";
@@ -199,6 +199,12 @@ export default function ReadyToSendPage() {
           <p className="text-xs rounded border border-amber-300 bg-amber-50 text-amber-900 px-2 py-1">
             Found by web search — the council register doesn&rsquo;t show the agent for this one. Check the
             application before sending; if the agent is different, use <strong>Edit contact</strong>.
+          </p>
+        )}
+        {addressLooksIncomplete(lead.address) && (
+          <p className="text-xs rounded border border-amber-300 bg-amber-50 text-amber-900 px-2 py-1">
+            The council data only gives &ldquo;{lead.address}&rdquo; as the address — check the application and
+            add the house number or site name in your email before sending.
           </p>
         )}
         {others > 0 && (

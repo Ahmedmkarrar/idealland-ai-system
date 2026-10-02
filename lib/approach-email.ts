@@ -97,8 +97,36 @@ function formatAddressWord(word: string, previous: string | null): string {
  * with the postcode kept upper case; one that already has lower case letters was
  * typed by a person and is left exactly as it is.
  */
+/**
+ * The London feed writes the house number as its own field: "65, Kingsmead
+ * Avenue", "20, 22, Gipsy Hill". In a letter that reads as "65 Kingsmead Avenue"
+ * and "20 and 22 Gipsy Hill", the way Lucy writes "87 and 89 Manor Road North".
+ */
+function joinHouseNumbers(address: string): string {
+  const num = String.raw`\d+[A-Za-z]?(?:\s*-\s*\d+[A-Za-z]?)?`;
+  return address
+    .replace(new RegExp(`^(${num}),\\s*(${num}),\\s*`), "$1 and $2 ")
+    .replace(new RegExp(`^(${num}),\\s*`), "$1 ");
+}
+
+/**
+ * True when the address names no house, number or site — "Mitcham, CR4 2PF",
+ * "Leatherhead Road" — so the letter can't say where the site is.
+ */
+export function addressLooksIncomplete(address: string): boolean {
+  const first = address.trim().split(",")[0].trim();
+  if (/\d/.test(first) || /^(land|site|plot|garages?|car park|former|rear)\b/i.test(first)) return false;
+  const words = first.split(/\s+/);
+  // A bare street ("Slievemore Close") or a bare town ("Mitcham"); a named house
+  // ("Rose Cottage") or a long description is left alone.
+  return words.length === 1 || (words.length <= 3 && STREET_WORD.test(words[words.length - 1]));
+}
+
+const STREET_WORD =
+  /^(road|street|avenue|lane|close|way|drive|gardens|grove|hill|park|crescent|place|terrace|mews|rise|walk|square)$/i;
+
 export function formatAddress(address: string): string {
-  const trimmed = address.trim();
+  const trimmed = joinHouseNumbers(address.trim());
   if (/[a-z]/.test(trimmed) || !/[A-Z]/.test(trimmed)) return trimmed;
   let previous: string | null = null;
   return trimmed
