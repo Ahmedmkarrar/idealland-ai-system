@@ -145,7 +145,9 @@ export function firmFromText(text: string | null): string | null {
 
 /** A name that is really a practice ("Whiteman Architects"), not a person. */
 function looksLikeFirm(name: string | null): boolean {
-  return !!name && firmFromText(name) === name;
+  // "Rolfe Judd Planning Ltd" matches as "Rolfe Judd Planning"; any practice
+  // suffix in the field means it holds a company, not a person.
+  return !!name && firmFromText(name) !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +171,15 @@ export function idoxContactsUrl(councilUrl: string): string | null {
   return idoxTabUrl(councilUrl, "contacts");
 }
 
+// What registers print in an empty field. "Not Available" once went through as
+// the practice name (Lambeth 26/02062/FUL), "Pete / Not Available" as the agent.
+const PLACEHOLDER = /^(not available|n\/?a|none|unknown|not known|tbc|-+|\.)$/i;
+
+function present(value: string | null | undefined): string | null {
+  const v = value?.trim();
+  return v && !PLACEHOLDER.test(v) ? v : null;
+}
+
 /** Every `<th>label</th><td>value</td>` pair, lower-cased label -> decoded value. */
 function tableFields(html: string): Map<string, string> {
   const fields = new Map<string, string>();
@@ -177,7 +188,7 @@ function tableFields(html: string): Map<string, string> {
   const rows = /<th[^>]*>([\s\S]*?)<\/th>\s*(?:<td[^>]*\/>|<td[^>]*>([\s\S]*?)<\/td>)/gi;
   for (const row of html.matchAll(rows)) {
     const key = decode(row[1]).toLowerCase();
-    const value = decode(row[2] ?? "");
+    const value = present(decode(row[2] ?? ""));
     if (key && value && !fields.has(key)) fields.set(key, value);
   }
   return fields;
@@ -195,7 +206,7 @@ function parseIdoxContacts(html: string): PortalContact | null {
   const block = html.match(/<div class="agents">([\s\S]*?)<\/div>/i)?.[1];
   if (!block) return null;
 
-  const name = cleanAgentName(decode(block.match(/<h3>\s*Agent\s*<\/h3>\s*<p>([\s\S]*?)<\/p>/i)?.[1] ?? "") || null);
+  const name = cleanAgentName(present(decode(block.match(/<h3>\s*Agent\s*<\/h3>\s*<p>([\s\S]*?)<\/p>/i)?.[1] ?? "")));
   const fields = tableFields(block);
 
   // Company details before personal ones — a practice inbox survives the
@@ -304,7 +315,7 @@ function definitionFields(html: string): Map<string, string> {
   const fields = new Map<string, string>();
   for (const row of html.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi)) {
     const key = decode(row[1]).replace(/\s*:\s*$/, "").toLowerCase();
-    const value = decode(row[2]);
+    const value = present(decode(row[2]));
     if (key && value && !fields.has(key)) fields.set(key, value);
   }
   return fields;
@@ -382,7 +393,15 @@ export async function extractContactFromPortal(
 
   if (isAstunUrl(url)) {
     const contactsUrl = astunContactsUrl(url);
-    const html = contactsUrl ? await fetchHtml(contactsUrl) : null;
+    if (!contactsUrl) return null;
+    let html = await fetchHtml(contactsUrl);
+    // Elmbridge's portal says it "may get no records back" when busy: a page
+    // without even the applicant field is that, not an application without an agent.
+    if (html !== null && !/Applicant Name/i.test(html)) {
+      await sleep(PORTAL_REQUEST_DELAY_MS * 3);
+      html = await fetchHtml(contactsUrl);
+      if (html !== null && !/Applicant Name/i.test(html)) throw new PortalBusyError(503);
+    }
     return html ? parseAstunContacts(html) : null;
   }
 
