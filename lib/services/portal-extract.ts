@@ -451,6 +451,7 @@ export async function resolveIdoxApplicationUrl(council: string, reference: stri
       headers: { "User-Agent": UA, Accept: "text/html" },
       signal: AbortSignal.timeout(25000),
     });
+    if (form.status >= 500 || isBusy(form.status)) throw new PortalBusyError(form.status);
     if (!form.ok) return null;
     const formHtml = await form.text();
     const csrf = formHtml.match(/name="_csrf"\s+value="([^"]+)"/)?.[1];
@@ -479,6 +480,10 @@ export async function resolveIdoxApplicationUrl(council: string, reference: stri
       body,
       signal: AbortSignal.timeout(25000),
     });
+    // Lambeth's search answers 504 for minutes at a time. That is the register
+    // being down, not the application missing — a lead that went to web search
+    // then was filed under the developer instead of its agent (26/01898/FUL).
+    if (res.status >= 500 || isBusy(res.status)) throw new PortalBusyError(res.status);
     if (!res.ok) return null;
 
     const keyFromUrl = res.url.match(/keyVal=([A-Za-z0-9_]+)/)?.[1];
@@ -490,7 +495,11 @@ export async function resolveIdoxApplicationUrl(council: string, reference: stri
     return keyVal
       ? `https://${host}/online-applications/applicationDetails.do?activeTab=summary&keyVal=${keyVal}`
       : null;
-  } catch {
+  } catch (error) {
+    if (error instanceof PortalBusyError) throw error;
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      throw new PortalBusyError(504);
+    }
     return null;
   }
 }

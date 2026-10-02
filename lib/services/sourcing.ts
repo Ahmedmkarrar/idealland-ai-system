@@ -6,6 +6,7 @@ import { cleanCouncilUrl, planIndexUrl, verifyMirrorUrl } from "@/lib/planning-p
 import { publicOwnerReason } from "@/lib/public-ownership";
 import { withRetry } from "@/lib/retry";
 import { coverageArea, inCoverage } from "@/lib/coverage";
+import { readNewHomes } from "@/lib/services/planit";
 
 // IdealLand's target band: 1-9 residential units. At 10+ units a scheme
 // triggers affordable-housing obligations (s.106 / borough policy) that
@@ -359,11 +360,30 @@ export async function scanCouncils(opts?: {
       councilUrl: string | null;
     }> = [];
 
+    const fresh: ScrapedApplication[] = [];
     for (const app of relevant) {
       const existing = await prisma.planningApplication.findUnique({
         where: { reference: app.reference },
       });
-      if (existing) continue;
+      if (!existing) fresh.push(app);
+    }
+
+    // The DataHub's unit count is often not what the application asks for
+    // ("6 units" for "3no residential flats", Kingston 26/01787), and the letter
+    // quotes it to the agent. The description is the applicant's own words, so a
+    // count read from it wins when it lands in the band. A 0 or null is not
+    // trusted to drop a lead: the reader once read "4x key worker homes studio
+    // apartments" as no homes at all.
+    const described: Array<number | null> = [];
+    for (let i = 0; i < fresh.length; i += 40) {
+      described.push(...(await readNewHomes(fresh.slice(i, i + 40).map((a) => a.description))));
+    }
+
+    for (const [i, scraped] of fresh.entries()) {
+      const read = described[i];
+      const units = read !== null && read >= MIN_UNITS && read <= MAX_UNITS ? read : scraped.units;
+      if (units < MIN_UNITS || units > MAX_UNITS) continue;
+      const app = { ...scraped, units };
 
       const created = await prisma.planningApplication.create({
         data: {

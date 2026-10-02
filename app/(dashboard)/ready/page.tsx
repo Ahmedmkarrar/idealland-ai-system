@@ -43,6 +43,7 @@ interface ReadyLead {
   approachSubject: string | null;
   approachBody: string | null;
   approachStatus: string | null;
+  approachSentAt: string | null;
   approachOutcome: string | null;
   staffNote: string | null;
   followUpAt: string | null;
@@ -56,6 +57,23 @@ function scoreBadgeClass(score: number | null): string {
   if (score >= 8) return "bg-emerald-100 text-emerald-800 border-emerald-200";
   if (score >= 5) return "bg-amber-100 text-amber-800 border-amber-200";
   return "bg-slate-100 text-slate-700 border-slate-200";
+}
+
+/** The same agent, by inbox or practice, so a second site can go in one letter. */
+function agentKey(lead: ReadyLead): string | null {
+  const email = lead.agentEmail?.trim().toLowerCase();
+  if (email) return email;
+  const firm = lead.agentFirm?.toLowerCase().replace(/\b(ltd|limited|llp)\b/g, "").replace(/[^a-z0-9]/g, "");
+  return firm || null;
+}
+
+function sentLettersByAgent(applications: ReadyLead[]): Map<string, ReadyLead[]> {
+  const byAgent = new Map<string, ReadyLead[]>();
+  for (const a of applications) {
+    const key = a.approachStatus === "sent" ? agentKey(a) : null;
+    if (key) byAgent.set(key, [...(byAgent.get(key) ?? []), a]);
+  }
+  return byAgent;
 }
 
 function linkedinSearchUrl(name: string | null, firm: string | null): string {
@@ -76,6 +94,7 @@ export default function ReadyToSendPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [sentByAgent, setSentByAgent] = useState<Map<string, ReadyLead[]>>(new Map());
   // The last site moved to Sent, so a mis-click can be undone from right here.
   const [lastSent, setLastSent] = useState<ReadyLead | null>(null);
 
@@ -88,6 +107,7 @@ export default function ReadyToSendPage() {
         .filter((a) => a.contactStatus === "found" && a.approachBody)
         .sort((a, b) => (b.leadScore ?? -1) - (a.leadScore ?? -1))
     );
+    setSentByAgent(sentLettersByAgent(applications));
     setIsLoading(false);
   }, []);
 
@@ -218,6 +238,21 @@ export default function ReadyToSendPage() {
             add the house number or site name in your email before sending.
           </p>
         )}
+        {(() => {
+          const key = agentKey(lead);
+          const earlier = key ? sentByAgent.get(key) ?? [] : [];
+          if (earlier.length === 0) return null;
+          return (
+            <p className="text-xs text-blue-700">
+              You&rsquo;ve already written to this agent about{" "}
+              {earlier
+                .slice(0, 3)
+                .map((e) => `${e.address} (${formatSentDate(e.approachSentAt)})`)
+                .join("; ")}
+              {earlier.length > 3 && ` and ${earlier.length - 3} more`}.
+            </p>
+          );
+        })()}
         {others > 0 && (
           <p className="text-xs text-blue-700">
             {others} other letter{others === 1 ? "" : "s"} waiting for this same address — you may want to send just one.

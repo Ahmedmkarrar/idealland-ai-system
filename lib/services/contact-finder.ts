@@ -134,7 +134,16 @@ export async function findAgentContact(
   // to go straight to web search. Its register can be searched by reference, and
   // once found the link is kept for Lucy as well as for the reader below.
   if (!app.councilUrl) {
-    const resolved = await resolveIdoxApplicationUrl(app.council, councilReference(app));
+    let resolved: string | null;
+    try {
+      resolved = await resolveIdoxApplicationUrl(app.council, councilReference(app));
+    } catch (error) {
+      if (!(error instanceof PortalBusyError)) throw error;
+      if (app.contactStatus === "not_found") {
+        await prisma.planningApplication.update({ where: { id: applicationId }, data: { contactStatus: null } });
+      }
+      return { ok: false, busy: true, reason: `${error.message} — left for the next run` };
+    }
     if (resolved) {
       app = await prisma.planningApplication.update({
         where: { id: applicationId },
@@ -507,7 +516,7 @@ export async function bulkFindContacts(options?: {
     where: { ...base, councilUrl: { not: null } },
     orderBy: order,
     take: limit,
-    select: { id: true, councilUrl: true },
+    select: { id: true, councilUrl: true, council: true },
   });
   const remaining = limit - withUrl.length;
   const withoutUrl = remaining > 0
@@ -515,7 +524,7 @@ export async function bulkFindContacts(options?: {
         where: { ...base, councilUrl: null },
         orderBy: order,
         take: remaining,
-        select: { id: true, councilUrl: true },
+        select: { id: true, councilUrl: true, council: true },
       })
     : [];
   const candidates = [...withUrl, ...withoutUrl];
@@ -526,7 +535,9 @@ export async function bulkFindContacts(options?: {
   // for the next run rather than keep knocking.
   const busyHosts = new Set<string>();
   for (const c of candidates) {
-    const host = portalHost(c.councilUrl);
+    // A lead with no link is looked up through its council's search, which can be
+    // down as a whole (Lambeth), so that counts as the council's host.
+    const host = portalHost(c.councilUrl) ?? `search:${c.council}`;
     if (host && busyHosts.has(host)) continue;
     const r = await findAgentContact(c.id);
     if (!r.ok && host && r.busy) busyHosts.add(host);

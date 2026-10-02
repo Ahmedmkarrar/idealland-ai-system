@@ -188,7 +188,7 @@ function isClaudeConfigured(): boolean {
  * in Kingston and in Elmbridge. null = not a residential scheme, or
  * the description doesn't say. Batched so a busy day is one call, not fifty.
  */
-async function readNewHomes(descriptions: string[]): Promise<Array<number | null>> {
+export async function readNewHomes(descriptions: string[]): Promise<Array<number | null>> {
   if (descriptions.length === 0 || !isClaudeConfigured()) return descriptions.map(() => null);
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
