@@ -49,6 +49,27 @@ export function approachMailto(
   return `mailto:${to}?${params}`;
 }
 
+/**
+ * The same agent, by inbox or practice. Shared by the Ready page ("you've
+ * already written to this agent") and the letter writer, which words a second
+ * letter to the same agent differently.
+ */
+export function agentKey(lead: { agentEmail: string | null; agentFirm: string | null }): string | null {
+  const email = lead.agentEmail?.trim().toLowerCase();
+  if (email) return email;
+  const firm = lead.agentFirm?.toLowerCase().replace(/\b(ltd|limited|llp)\b/g, "").replace(/[^a-z0-9]/g, "");
+  return firm || null;
+}
+
+/**
+ * Lucy (7 Oct 2026): a long dash is a giveaway that a machine wrote the letter.
+ * Every dash in a letter, including any that arrive inside an address, is the
+ * short one she types herself.
+ */
+export function plainDashes(text: string): string {
+  return text.replace(/\s*[\u2014\u2013]\s*/g, " - ");
+}
+
 // Words that stay lower case inside an address ("Land to the Rear of…").
 const ADDRESS_SMALL_WORDS = new Set([
   "a", "an", "and", "at", "by", "for", "in", "of", "on", "the", "to", "with",

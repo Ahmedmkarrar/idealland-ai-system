@@ -9,7 +9,7 @@
 
 import { prisma } from "@/lib/db/client";
 import { inCoverage } from "@/lib/coverage";
-import { buildApproachEmail, draftApproach } from "@/lib/services/contact-finder";
+import { buildApproachEmail, draftApproach, earlierSitesFor, sentSitesByAgent } from "@/lib/services/contact-finder";
 import {
   extractContactFromPortal,
   isSupportedPortal,
@@ -46,14 +46,15 @@ export async function runSelfCheck(): Promise<SelfCheckResult> {
     where: { ...inCoverage, approachStatus: "drafted", approachBody: { not: null }, publicOwner: false },
   });
 
+  const byAgent = await sentSitesByAgent();
   for (const lead of letters) {
     const ref = lead.lpaReference ?? lead.reference;
 
     // A letter written before its lead changed (a decision, a corrected unit
     // count or agent) no longer says what the lead says. Rewrite it.
-    const expected = buildApproachEmail(lead);
+    const expected = buildApproachEmail({ ...lead, earlierSites: earlierSitesFor(lead, byAgent) });
     if (!sameText(expected.body, lead.approachBody ?? "") || expected.subject !== lead.approachSubject) {
-      await draftApproach(lead.id, { force: true });
+      await draftApproach(lead.id, { force: true, byAgent });
       rewritten++;
     }
 

@@ -13,11 +13,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   RefreshCw, Search, MapPin, Mail, Copy, Check,
-  AlertTriangle, Send, Inbox, CheckCheck, Undo2,
+  AlertTriangle, Send, Inbox, CheckCheck, Undo2, Trash2,
 } from "lucide-react";
 import { isUsableEmail } from "@/lib/email-address";
 import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
-import { addressLooksIncomplete, approachMailto, refreshGreeting } from "@/lib/approach-email";
+import { addressLooksIncomplete, agentKey, approachMailto, refreshGreeting } from "@/lib/approach-email";
 import { isCoveredCouncil } from "@/lib/coverage";
 import { cameBack, contactSource, formatSentDate, updateApproach, type ApproachChange } from "@/lib/approach-state";
 import { EditContact, LeadNote, ReportProblem } from "@/components/lead-notes";
@@ -60,14 +60,6 @@ function scoreBadgeClass(score: number | null): string {
   return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
-/** The same agent, by inbox or practice, so a second site can go in one letter. */
-function agentKey(lead: ReadyLead): string | null {
-  const email = lead.agentEmail?.trim().toLowerCase();
-  if (email) return email;
-  const firm = lead.agentFirm?.toLowerCase().replace(/\b(ltd|limited|llp)\b/g, "").replace(/[^a-z0-9]/g, "");
-  return firm || null;
-}
-
 function sentLettersByAgent(applications: ReadyLead[]): Map<string, ReadyLead[]> {
   const byAgent = new Map<string, ReadyLead[]>();
   for (const a of applications) {
@@ -96,8 +88,9 @@ export default function ReadyToSendPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [sentByAgent, setSentByAgent] = useState<Map<string, ReadyLead[]>>(new Map());
-  // The last site moved to Sent, so a mis-click can be undone from right here.
-  const [lastSent, setLastSent] = useState<ReadyLead | null>(null);
+  // The last site moved to Sent or discarded, so a mis-click can be undone from right here.
+  const [lastMoved, setLastMoved] = useState<{ lead: ReadyLead; to: "sent" | "discarded" } | null>(null);
+  const [showDiscarded, setShowDiscarded] = useState(false);
 
   const fetchLeads = useCallback(async () => {
     const response = await fetch("/api/sourcing");
@@ -124,7 +117,7 @@ export default function ReadyToSendPage() {
 
   const handleApproachState = async (lead: ReadyLead, changes: ApproachChange) => {
     await updateApproach(lead.id, changes);
-    setLastSent(changes.status === "sent" ? lead : null);
+    setLastMoved(changes.status === "sent" || changes.status === "discarded" ? { lead, to: changes.status } : null);
     await fetchLeads();
   };
 
@@ -146,8 +139,9 @@ export default function ReadyToSendPage() {
   // Outside Lucy's areas nothing is left to send — those letters live on the Sent page.
   // Council-owned land can't be brokered, so it never reaches the to-send list.
   const pending = visible.filter(
-    (l) => l.approachStatus !== "sent" && isCoveredCouncil(l.council) && !l.publicOwner
+    (l) => l.approachStatus !== "sent" && l.approachStatus !== "discarded" && isCoveredCouncil(l.council) && !l.publicOwner
   );
+  const discarded = visible.filter((l) => l.approachStatus === "discarded");
   // Several applications on one site (Betchworth House has six) usually mean one
   // letter to the agent, not six.
   const lettersAtAddress = new Map<string, number>();
@@ -343,7 +337,8 @@ export default function ReadyToSendPage() {
           Sites where we&rsquo;ve found the agent and written your approach email. Read it, send it,
           then press <strong>Mark as sent</strong> — it moves to the{" "}
           <Link href="/sent" className="text-blue-600 hover:underline">Sent</Link> page. If you&rsquo;ve
-          already written to them another way, press <strong>Already approached</strong>.
+          already written to them another way, press <strong>Already approached</strong>. If you&rsquo;ve
+          decided not to send one, press <strong>Discard</strong>.
         </p>
       </div>
 
@@ -367,20 +362,24 @@ export default function ReadyToSendPage() {
         ))}
       </div>
 
-      {lastSent && (
+      {lastMoved && (
         <Card className="border-blue-200 bg-blue-50 max-w-4xl">
           <CardContent className="py-3 flex flex-wrap items-center gap-3">
             <CheckCheck className="w-4 h-4 text-blue-600 shrink-0" />
             <p className="text-sm text-blue-900 flex-1 min-w-[12rem]">
-              <strong>{lastSent.address}</strong> moved to{" "}
-              <Link href="/sent" className="underline">Sent</Link>.
+              <strong>{lastMoved.lead.address}</strong>{" "}
+              {lastMoved.to === "sent" ? (
+                <>moved to <Link href="/sent" className="underline">Sent</Link>.</>
+              ) : (
+                <>discarded. It&rsquo;s kept at the bottom of this page under <strong>Discarded</strong>.</>
+              )}
             </p>
             <Button
               size="sm"
               variant="outline"
               onClick={async () => {
-                await updateApproach(lastSent.id, { status: "not_sent" });
-                setLastSent(null);
+                await updateApproach(lastMoved.lead.id, { status: "not_sent" });
+                setLastMoved(null);
                 await fetchLeads();
               }}
             >
@@ -475,6 +474,16 @@ export default function ReadyToSendPage() {
                         >
                           Already approached
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground"
+                          onClick={() => handleApproachState(lead, { status: "discarded" })}
+                          title="You've decided not to send this one — takes it off the list without counting it as sent"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                          Discard
+                        </Button>
                       </div>
                     </div>
                   </CardContent>
@@ -531,6 +540,16 @@ export default function ReadyToSendPage() {
                         >
                           Already approached
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground"
+                          onClick={() => handleApproachState(lead, { status: "discarded" })}
+                          title="You've decided not to send this one — takes it off the list without counting it as sent"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                          Discard
+                        </Button>
                       </div>
                     </div>
                   </CardContent>
@@ -540,6 +559,39 @@ export default function ReadyToSendPage() {
           )}
 
         </div>
+      )}
+
+      {/* Letters Lucy chose not to send — out of the way, but one click brings one back. */}
+      {discarded.length > 0 && (
+        <section className="space-y-3 max-w-4xl">
+          <button
+            type="button"
+            onClick={() => setShowDiscarded((v) => !v)}
+            className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5 hover:text-foreground"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Discarded ({discarded.length}) {showDiscarded ? "▾" : "▸"}
+          </button>
+          {showDiscarded &&
+            discarded.map((lead) => (
+              <Card key={lead.id}>
+                <CardContent className="py-3 flex flex-wrap items-center gap-3">
+                  <div className="flex-1 min-w-[12rem]">{renderSiteHeader(lead)}</div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      await updateApproach(lead.id, { status: "not_sent" });
+                      await fetchLeads();
+                    }}
+                  >
+                    <Undo2 className="w-3.5 h-3.5 mr-1.5" />
+                    Bring back
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+        </section>
       )}
 
       <p className="text-xs text-muted-foreground flex items-center gap-1.5">

@@ -23,7 +23,7 @@ import { usableEmail } from "@/lib/email-address";
 import { ENTERED_BY_LUCY } from "@/lib/approach-state";
 import { findEmailOnWebsite, guessWebsites } from "@/lib/services/website-email";
 import { councilReference } from "@/lib/planning-portals";
-import { formatAddress, timeGreeting } from "@/lib/approach-email";
+import { agentKey, formatAddress, plainDashes, timeGreeting } from "@/lib/approach-email";
 import {
   extractContactFromPortal,
   resolveIdoxApplicationUrl,
@@ -380,13 +380,19 @@ function unitPhrase(units: number): string {
 }
 
 /**
- * Lucy's wording (2026-08-07). She sends the letter herself and books the call,
- * so it offers to arrange one rather than printing a direct line. Now that the
- * letter is signed by Lucy, "a phone call with Lucy" would have her offering a
- * call with herself, so the name is dropped.
+ * Lucy's wording (7 Oct 2026). She sends the letter herself and books the call,
+ * with James on it, so it offers to arrange one rather than printing a number.
  */
 function chatOffer(): string {
-  return "If you would prefer to have a chat please let me know and I will set up a phone call.";
+  return "If you would prefer to have a chat please let me know and I will set up a call with my managing director, James.";
+}
+
+/** "23 Four Wents", "23 Four Wents and 49 High Street", "… and other sites". */
+function earlierSitesPhrase(addresses: string[]): string {
+  const [latest, second] = addresses.map(formatAddress);
+  if (addresses.length === 1) return latest;
+  if (addresses.length === 2) return `${latest} and ${second}`;
+  return `${latest} and a few other sites`;
 }
 
 // Lucy's own templates, verbatim in structure (supplied 2026-07-25), with the
@@ -432,10 +438,22 @@ export function buildApproachEmail(app: {
   address: string;
   status: string;
   decision: string | null;
+  /** Sites this agent has already had a letter about, most recent first. */
+  earlierSites?: string[];
 }): { subject: string; body: string } {
+  const letter = writeApproachEmail(app);
+  return { subject: plainDashes(letter.subject), body: plainDashes(letter.body) };
+}
+
+function writeApproachEmail(app: Parameters<typeof buildApproachEmail>[0]): { subject: string; body: string } {
   const hasPlanning = app.status === "decided" && isApproval(app.decision);
   const open = greeting(app.agentName, app.agentFirm);
   const address = formatAddress(app.address);
+  const earlier = app.earlierSites?.length ? earlierSitesPhrase(app.earlierSites) : null;
+
+  // Lucy (7 Oct 2026): an agent who has already had a letter shouldn't get the
+  // same one again, so the second letter mentions the first and is worded afresh.
+  if (earlier) return writeFollowOnEmail(app, { open, address, earlier, hasPlanning });
 
   if (hasPlanning && writingToApplicant(app)) {
     return {
@@ -477,7 +495,7 @@ ${chatOffer()}`,
 
 I came across the application at ${address} for ${unitPhrase(app.units)}.
 
-I just wanted to ask — is your client planning to build it out, or would they consider a sale?
+I just wanted to ask - is your client planning to build it out, or would they consider a sale?
 
 We are currently working with a number of developers actively acquiring similar schemes in surrounding boroughs and are retained by them, so there's no fee to your client. We are also happy to discuss an introduction fee with you.
 
@@ -485,9 +503,84 @@ ${chatOffer()}`,
   };
 }
 
+function writeFollowOnEmail(
+  app: Parameters<typeof buildApproachEmail>[0],
+  { open, address, earlier, hasPlanning }: { open: string; address: string; earlier: string; hasPlanning: boolean }
+): { subject: string; body: string } {
+  if (hasPlanning && writingToApplicant(app)) {
+    return {
+      subject: `Planning permission - ${address}`,
+      body: `${open}
+
+I hope you are well. I wrote to you recently about ${earlier}, and I noticed from the planning register that you have now received planning permission to construct ${unitPhrase(app.units)} at ${address}.
+
+Would you consider selling this site, or are you planning to build it out yourself?
+
+As before, I have several clients who would be interested in buying a site like this. Our services are completely free as we are retained by our purchasers. You can see a snapshot of our retained clients and recent work at ${IDEALLAND_WEBSITE}.
+
+${chatOffer()}`,
+    };
+  }
+
+  if (hasPlanning) {
+    return {
+      subject: `Planning permission - ${address}`,
+      body: `${open}
+
+I hope you are well. I wrote to you recently about ${earlier}, and I noticed from the planning register that your client has now received planning permission to construct ${unitPhrase(app.units)} at ${address}.
+
+Would your client consider selling this site, or are they planning to build it out themselves?
+
+As before, I have several clients who would be interested in buying a site like this. We are retained by our purchasers, so there is no fee to your client, and we are happy to discuss an introduction fee with you. You can see a snapshot of our retained clients and recent work at ${IDEALLAND_WEBSITE}.
+
+${chatOffer()}`,
+    };
+  }
+
+  return {
+    subject: `Your application at ${address}`,
+    body: `${open}
+
+I wrote to you recently about ${earlier}, and I have now come across your application at ${address} for ${unitPhrase(app.units)}.
+
+Would your client consider selling this one, or are they planning to build it out themselves?
+
+As before, we are working with a number of developers who are actively acquiring schemes like this in surrounding boroughs. They retain us, so there is no fee to your client, and we would be happy to discuss an introduction fee with you.
+
+${chatOffer()}`,
+  };
+}
+
+/**
+ * Every site already written about, grouped by agent, most recent first. One
+ * query for a whole batch of letters (the nightly self-check checks ~100).
+ */
+export async function sentSitesByAgent(): Promise<Map<string, Array<{ id: string; address: string }>>> {
+  const sent = await prisma.planningApplication.findMany({
+    where: { approachStatus: "sent" },
+    orderBy: { approachSentAt: "desc" },
+    select: { id: true, address: true, agentEmail: true, agentFirm: true },
+  });
+  const byAgent = new Map<string, Array<{ id: string; address: string }>>();
+  for (const s of sent) {
+    const key = agentKey(s);
+    if (key) byAgent.set(key, [...(byAgent.get(key) ?? []), { id: s.id, address: s.address }]);
+  }
+  return byAgent;
+}
+
+/** The other sites this lead's agent has had a letter about. */
+export function earlierSitesFor(
+  lead: { id: string; agentEmail: string | null; agentFirm: string | null },
+  byAgent: Map<string, Array<{ id: string; address: string }>>
+): string[] {
+  const key = agentKey(lead);
+  return (key ? byAgent.get(key) ?? [] : []).filter((s) => s.id !== lead.id).map((s) => s.address);
+}
+
 export async function draftApproach(
   applicationId: string,
-  options?: { force?: boolean }
+  options?: { force?: boolean; byAgent?: Map<string, Array<{ id: string; address: string }>> }
 ): Promise<{ ok: boolean; reason?: string; subject?: string; body?: string }> {
   const app = await prisma.planningApplication.findUnique({ where: { id: applicationId } });
   if (!app) return { ok: false, reason: "Application not found" };
@@ -503,6 +596,7 @@ export async function draftApproach(
     address: app.address,
     status: app.status,
     decision: app.decision,
+    earlierSites: earlierSitesFor(app, options?.byAgent ?? (await sentSitesByAgent())),
   });
 
   await prisma.planningApplication.update({
@@ -510,7 +604,8 @@ export async function draftApproach(
     data: {
       approachSubject: subject,
       approachBody: body,
-      approachStatus: "drafted",
+      // A letter Lucy set aside stays set aside when its wording is refreshed.
+      approachStatus: app.approachStatus === "discarded" ? "discarded" : "drafted",
     },
   });
 
@@ -607,11 +702,13 @@ export function isApproachOutcome(v: string): v is ApproachOutcome {
 //
 // "sent" also covers a site Lucy approached some other way — a letter written
 // before the system found it, or a phone call — so it stops appearing in her
-// to-do lists. "not_sent" undoes a mis-click: the draft goes back to Ready to
+// to-do lists. "discarded" is a letter Lucy decided not to send (it doesn't look
+// right, or the agent has had enough letters); it leaves Ready to Send without
+// counting as sent. "not_sent" undoes either: the draft goes back to Ready to
 // Send and any outcome recorded against it is cleared.
 export async function setApproachState(
   applicationId: string,
-  changes: { status?: "drafted" | "sent" | "not_sent"; outcome?: ApproachOutcome | null }
+  changes: { status?: "drafted" | "sent" | "not_sent" | "discarded"; outcome?: ApproachOutcome | null }
 ): Promise<{ ok: boolean; reason?: string }> {
   const app = await prisma.planningApplication.findUnique({ where: { id: applicationId } });
   if (!app) return { ok: false, reason: "Application not found" };
@@ -638,7 +735,30 @@ export async function setApproachState(
   if (Object.keys(data).length === 0) return { ok: false, reason: "Nothing to update" };
 
   await prisma.planningApplication.update({ where: { id: applicationId }, data });
+  if (changes.status) await redraftForAgent(app);
   return { ok: true };
+}
+
+/**
+ * Once a letter to an agent is sent (or un-sent), that agent's other waiting
+ * letters are reworded to match — the next one mentions the site just written about.
+ */
+async function redraftForAgent(app: { id: string; agentEmail: string | null; agentFirm: string | null }): Promise<void> {
+  const key = agentKey(app);
+  if (!key) return;
+  const waiting = await prisma.planningApplication.findMany({
+    where: {
+      id: { not: app.id },
+      approachStatus: { in: ["drafted", "discarded"] },
+      approachBody: { not: null },
+      OR: [{ agentEmail: { not: null } }, { agentFirm: { not: null } }],
+    },
+    select: { id: true, agentEmail: true, agentFirm: true },
+  });
+  const sameAgent = waiting.filter((w) => agentKey(w) === key);
+  if (sameAgent.length === 0) return;
+  const byAgent = await sentSitesByAgent();
+  for (const w of sameAgent) await draftApproach(w.id, { force: true, byAgent });
 }
 
 export interface LeadEdits {

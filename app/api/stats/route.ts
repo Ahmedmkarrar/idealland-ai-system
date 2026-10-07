@@ -37,7 +37,7 @@ export async function GET() {
     // A lead is "ready" once it has a named contact and a written approach email
     // and nobody has sent it yet — this is the queue on the /ready page.
     prisma.planningApplication.count({
-      where: { ...inCoverage, contactStatus: "found", approachBody: { not: null }, approachStatus: { not: "sent" } },
+      where: { ...inCoverage, contactStatus: "found", approachBody: { not: null }, approachStatus: { notIn: ["sent", "discarded"] } },
     }),
     prisma.planningApplication.count({ where: { approachStatus: "sent" } }),
   ]);

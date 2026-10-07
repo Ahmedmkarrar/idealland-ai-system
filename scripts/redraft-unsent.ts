@@ -4,7 +4,7 @@
 //
 // Usage: npx tsx scripts/redraft-unsent.ts [--dry]
 import { prisma } from "@/lib/db/client";
-import { draftApproach } from "@/lib/services/contact-finder";
+import { draftApproach, sentSitesByAgent } from "@/lib/services/contact-finder";
 
 async function main(): Promise<void> {
   const dry = process.argv.includes("--dry");
@@ -14,9 +14,10 @@ async function main(): Promise<void> {
   });
   console.log(`${drafts.length} unsent drafts${dry ? " (dry run)" : ""}`);
   if (dry) return;
+  const byAgent = await sentSitesByAgent();
   let done = 0;
   for (const { id } of drafts) {
-    const result = await draftApproach(id, { force: true });
+    const result = await draftApproach(id, { force: true, byAgent });
     if (result.ok) done++;
     else console.warn(`${id}: ${result.reason}`);
   }
