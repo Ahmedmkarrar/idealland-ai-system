@@ -147,7 +147,10 @@ const STREET_WORD =
   /^(road|street|avenue|lane|close|way|drive|gardens|grove|hill|park|crescent|place|terrace|mews|rise|walk|square)$/i;
 
 export function formatAddress(address: string): string {
-  const trimmed = joinHouseNumbers(address.trim());
+  return joinDanglingWords(titleCaseAddress(joinHouseNumbers(address.trim())));
+}
+
+function titleCaseAddress(trimmed: string): string {
   if (/[a-z]/.test(trimmed) || !/[A-Z]/.test(trimmed)) return trimmed;
   let previous: string | null = null;
   return trimmed
@@ -159,4 +162,46 @@ export function formatAddress(address: string): string {
       return formatted;
     })
     .join("");
+}
+
+/**
+ * Registers split "LAND & GARAGES AT, ALDERSGROVE AVENUE" and "LAND ADJACENT TO,
+ * VALE LODGE" mid-phrase. A comma after "at", "of" or "to" is dropped so the
+ * letter reads "Land & Garages at Aldersgrove Avenue".
+ */
+function joinDanglingWords(address: string): string {
+  return address.replace(/\b(at|of|to|adjacent|adjoining|behind|between)\s*,\s*/gi, "$1 ");
+}
+
+/**
+ * The site's name without the town and postcode, for a subject line:
+ * "Charlton Liberal Club", "39 Oatlands Chase", "Land & Garages at Aldersgrove Avenue".
+ */
+export function shortAddress(address: string): string {
+  const parts = formatAddress(address).split(",").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return address.trim();
+  // "Flat 2", "Unit 4" or a bare number names nothing on its own.
+  const first = parts[0];
+  const namesNothing =
+    /^\d+[A-Za-z]?$/.test(first) ||
+    /^(flat|unit|plot|apartment)\b/i.test(first) ||
+    // "Former Garages", "Land", "Rear Garden": a site described, not yet located.
+    (/^(former|land|site|garages?|rear|car park)\b/i.test(first) && !/\d|\b(at|of|to|adjacent)\b/i.test(first));
+  if (parts.length > 1 && namesNothing) {
+    return `${first}, ${parts[1]}`;
+  }
+  return first;
+}
+
+/**
+ * Lucy's own sentence, typed on the Ready page just before she sends, goes in
+ * after the opening paragraph so the letter reads as written to this person.
+ */
+export function withPersonalLine(body: string | null, line: string | undefined): string {
+  const text = body ?? "";
+  const own = line?.trim();
+  if (!own) return text;
+  const paragraphs = text.split("\n\n");
+  if (paragraphs.length < 3) return `${text}\n\n${own}`;
+  return [...paragraphs.slice(0, 2), own, ...paragraphs.slice(2)].join("\n\n");
 }

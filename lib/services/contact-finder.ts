@@ -23,14 +23,14 @@ import { usableEmail } from "@/lib/email-address";
 import { ENTERED_BY_LUCY } from "@/lib/approach-state";
 import { findEmailOnWebsite, guessWebsites } from "@/lib/services/website-email";
 import { councilReference } from "@/lib/planning-portals";
-import { agentKey, formatAddress, plainDashes, timeGreeting } from "@/lib/approach-email";
+import { agentKey, formatAddress, plainDashes, shortAddress, timeGreeting } from "@/lib/approach-email";
 import {
   extractContactFromPortal,
   resolveIdoxApplicationUrl,
   PortalBusyError,
   type PortalContact,
 } from "@/lib/services/portal-extract";
-import { inCoverage } from "@/lib/coverage";
+import { buyingArea, inCoverage } from "@/lib/coverage";
 
 const MODEL = "claude-haiku-4-5-20251001";
 
@@ -345,7 +345,6 @@ Return ONLY a JSON object, no prose:
 // James is still copied on each one; see lib/approach-email.ts.
 //
 // The letter prints no phone number: Lucy offers to set up the call herself.
-const IDEALLAND_WEBSITE = process.env.IDEALLAND_WEBSITE ?? "www.idealland.co.uk";
 
 // A first name is only safe as a greeting when it's a single clean person. Two
 // agents joined by "/" or a comma-separated list get the time-of-day greeting.
@@ -363,9 +362,21 @@ function comparable(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+const TITLE = /^(mr|mrs|ms|miss|mx|dr)\.?$/i;
+
+function properCase(word: string): string {
+  return word === word.toUpperCase() ? word.charAt(0) + word.slice(1).toLowerCase() : word;
+}
+
 function greeting(agentName: string | null, agentFirm: string | null): string {
   if (!agentName || /[/,&]/.test(agentName)) return timeGreeting();
   const words = agentName.trim().split(/\s+/);
+  // "Mr Patel" on the register: "Dear Mr Patel,", never "Dear Mr,".
+  if (TITLE.test(words[0])) {
+    const surname = words.length > 1 ? words[words.length - 1].replace(/\./g, "") : "";
+    if (surname.length < 2 || COMPANY_WORD.test(agentName)) return timeGreeting();
+    return `Dear ${properCase(words[0].replace(/\./g, ""))} ${properCase(surname)},`;
+  }
   if (words.length < 2 || COMPANY_WORD.test(agentName)) return timeGreeting();
   if (agentFirm && comparable(agentName) === comparable(agentFirm)) return timeGreeting();
   const raw = words[0];
@@ -375,8 +386,106 @@ function greeting(agentName: string | null, agentFirm: string | null): string {
   return first.replace(/\./g, "").length > 1 ? `Dear ${first},` : timeGreeting();
 }
 
-function unitPhrase(units: number): string {
-  return `${units} residential ${units === 1 ? "unit" : "units"}`;
+const NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+
+function inWords(n: number): string {
+  return NUMBER_WORDS[n] ?? String(n);
+}
+
+const COUNT = String.raw`(\d+|one|two|three|four|five|six|seven|eight|nine|ten)`;
+
+function countValue(word: string): number {
+  return /^\d+$/.test(word) ? Number(word) : NUMBER_WORDS.indexOf(word.toLowerCase());
+}
+
+/**
+ * The homes as the description counts them: "4 self contained residential
+ * units", "3No. residential dwellings", "5, three-storey residential dwellings".
+ * The unit field can disagree (it counts a whole site, or the gross figure), and
+ * the letter has to say what the agent wrote on the form.
+ */
+function describedHomes(description: string): { count: number; word: string } | null {
+  const pattern = new RegExp(
+    String.raw`\b${COUNT},?\s*(?:nos?\.?\s*(?:\d\s*[- ]?bed(?:room)?s?\s+)?|x\s*)?(?:(?:two|three|four|five|[2-5])[- ]stor(?:e)?y\s+)?(?:new\s+|additional\s+|private\s+)?(?:self[- ]contained\s+)?(?:residential\s+)?(flats?|apartments?|maisonettes?|units?|dwellings?|dwelling ?houses?|houses?|homes?|bungalows?)\b`,
+    "i"
+  );
+  const m = description.match(pattern);
+  if (!m) return null;
+  const count = countValue(m[1]);
+  return count > 0 ? { count, word: m[2].toLowerCase() } : null;
+}
+
+/** "4 x 2 bedroom units and 2 x 1 bedroom units" -> [{4, 2}, {2, 1}]. */
+function bedroomCounts(description: string): Array<{ count: number; beds: number }> {
+  const pattern = /(\d+)\s*(?:nos?\.?\s*|x\s*)(\d)\s*[- ]?\s*bed(?:room)?s?\b/gi;
+  return [...description.matchAll(pattern)].map((m) => ({ count: Number(m[1]), beds: Number(m[2]) }));
+}
+
+/** "four 2-beds and two 1-beds", "two 1-bed flats". */
+function bedroomMix(mix: Array<{ count: number; beds: number }>, noun: string): string {
+  if (mix.length === 1) return `${inWords(mix[0].count)} ${mix[0].beds}-bed ${noun}`;
+  const parts = mix.map((m) => `${inWords(m.count)} ${m.beds}-bed${m.count === 1 ? "" : "s"}`);
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+type HomeKind = "flats" | "houses" | "homes";
+
+function kindOf(word: string | null, description: string): HomeKind {
+  if (word && /^(flat|apartment|maisonette)/.test(word)) return "flats";
+  if (word && /^(house|dwelling ?house|bungalow)/.test(word)) return "houses";
+  if (/\b(flats?|apartments?|maisonettes?)\b/i.test(description)) return "flats";
+  if (!word && /\b(houses?|dwelling-?houses?|bungalows?|semi-detached)\b/i.test(description)) return "houses";
+  return "homes";
+}
+
+function homesNoun(kind: HomeKind, count: number): string {
+  if (count === 1) return kind === "flats" ? "new flat" : kind === "houses" ? "new house" : "new home";
+  return `${inWords(count)} ${kind === "homes" ? "new homes" : kind}`;
+}
+
+/**
+ * What the scheme is, in the words an agent would use for it: "three-storey
+ * block of four 2-beds and two 1-beds", "six houses", "conversion into two flats".
+ * Read straight off the council's description, never guessed; anything it can't
+ * read with confidence falls back to "six new homes".
+ *
+ * Lucy (7 Oct 2026): an agent wrote back that we hadn't done our homework. A
+ * letter that names the actual scheme shows somebody looked at it.
+ */
+export function schemePhrase(description: string | null, units: number): string {
+  const d = (description ?? "").replace(/\s+/g, " ");
+
+  // Only a scheme that ends as an HMO is one; converting an HMO into flats isn't.
+  if (/\b(?:to|into|as|form)\s+(?:a |an )?[\w\s,()-]{0,40}?\b(HMO|house in multiple occupation)\b/i.test(d)) {
+    return "HMO conversion";
+  }
+
+  // A bedroom mix is used only when it accounts for every home the description counts.
+  const described = describedHomes(d);
+  const counts = bedroomCounts(d);
+  const mixTotal = counts.reduce((sum, m) => sum + m.count, 0);
+  const useMix = counts.length > 0 && (!described || described.count === mixTotal);
+  const count = useMix ? mixTotal : described?.count ?? units;
+  const kind = kindOf(described?.word ?? null, d);
+  const noun = kind === "houses" ? "house" : "flat";
+  const homes = useMix ? bedroomMix(counts, count === 1 ? noun : `${noun}s`) : homesNoun(kind, count);
+
+  if (/\b(change of use|conversion|convert(?:ed|ing)?)\b/i.test(d)) return `conversion into ${homes}`;
+
+  const storeys = d.match(/\berection of (?:a |one |new )*(two|three|four|five|six|[2-6])[- ]stor(?:e)?y (?:building|block)\b/i);
+  if (storeys && kind !== "houses") {
+    const height = /^\d$/.test(storeys[1]) ? inWords(Number(storeys[1])) : storeys[1].toLowerCase();
+    return `${height}-storey block of ${homes}`;
+  }
+  return homes;
+}
+
+/** "August 2024", in London time, or null when the date is missing. */
+function monthYear(date: Date | string | null | undefined): string | null {
+  if (!date) return null;
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "Europe/London" }).format(d);
 }
 
 /**
@@ -387,18 +496,14 @@ function chatOffer(): string {
   return "If you would prefer to have a chat please let me know and I will set up a call with my managing director, James.";
 }
 
-/** "23 Four Wents", "23 Four Wents and 49 High Street", "… and other sites". */
+/** "23 Four Wents", "23 Four Wents and 49 High Street", "… and a few other sites". */
 function earlierSitesPhrase(addresses: string[]): string {
-  const [latest, second] = addresses.map(formatAddress);
+  const [latest, second] = addresses.map(shortAddress);
   if (addresses.length === 1) return latest;
   if (addresses.length === 2) return `${latest} and ${second}`;
   return `${latest} and a few other sites`;
 }
 
-// Lucy's own templates, verbatim in structure (supplied 2026-07-25), with the
-// site specifics slotted in from our structured fields. Two scenarios: a site
-// that already HAS planning permission (status "decided") vs one still SEEKING it.
-// Deterministic on purpose — this is her voice, so no paraphrasing / no LLM.
 /**
  * Only an explicit grant earns the "you have received planning permission" letter.
  *
@@ -430,6 +535,12 @@ function writingToApplicant(app: { agentName: string | null; agentFirm: string |
   return [app.agentName, app.agentFirm].some((name) => !!name && comparable(name) === applicant);
 }
 
+// Lucy's letter, rewritten with her on 7 Oct 2026 after an agent replied that it
+// read like a mass mailing and that we hadn't done our homework. It no longer
+// claims a client ready to buy the site; it names the scheme, says when it went
+// in or was approved, and asks one question. The council reference leads the
+// subject, the way one professional writes to another. Deterministic on purpose:
+// this is her voice, so no paraphrasing and no LLM.
 export function buildApproachEmail(app: {
   agentName: string | null;
   agentFirm: string | null;
@@ -438,6 +549,12 @@ export function buildApproachEmail(app: {
   address: string;
   status: string;
   decision: string | null;
+  description?: string | null;
+  council?: string;
+  reference?: string;
+  lpaReference?: string | null;
+  submittedAt?: Date | string | null;
+  decidedAt?: Date | string | null;
   /** Sites this agent has already had a letter about, most recent first. */
   earlierSites?: string[];
 }): { subject: string; body: string } {
@@ -445,107 +562,62 @@ export function buildApproachEmail(app: {
   return { subject: plainDashes(letter.subject), body: plainDashes(letter.body) };
 }
 
-function writeApproachEmail(app: Parameters<typeof buildApproachEmail>[0]): { subject: string; body: string } {
+type LetterInput = Parameters<typeof buildApproachEmail>[0];
+
+function writeApproachEmail(app: LetterInput): { subject: string; body: string } {
   const hasPlanning = app.status === "decided" && isApproval(app.decision);
+  const toOwner = hasPlanning && writingToApplicant(app);
   const open = greeting(app.agentName, app.agentFirm);
   const address = formatAddress(app.address);
-  const earlier = app.earlierSites?.length ? earlierSitesPhrase(app.earlierSites) : null;
+  const scheme = schemePhrase(app.description ?? null, app.units);
+  const council = app.council?.trim() || "the council";
+
+  // "...that Greenwich approved in August 2024" / "...that went in to Merton in May 2026".
+  const approved = monthYear(app.decidedAt);
+  const submitted = monthYear(app.submittedAt);
+  const when = hasPlanning
+    ? `that ${council} approved${approved ? ` in ${approved}` : ""}`
+    : submitted
+      ? `that went in to ${council} in ${submitted}`
+      : `with ${council}`;
+
+  const ref = app.reference && app.council
+    ? councilReference({ reference: app.reference, council: app.council, lpaReference: app.lpaReference })
+    : app.lpaReference?.trim() || null;
+  const site = shortAddress(app.address);
+  const subject = ref ? `${ref} - ${site}` : `Your scheme at ${site}`;
+
+  const fees = toOwner
+    ? "There's no fee to you, as our buyers pay us."
+    : "There's no fee to your client, as our buyers pay us, and we're happy to agree an introduction fee with you.";
 
   // Lucy (7 Oct 2026): an agent who has already had a letter shouldn't get the
   // same one again, so the second letter mentions the first and is worded afresh.
-  if (earlier) return writeFollowOnEmail(app, { open, address, earlier, hasPlanning });
-
-  if (hasPlanning && writingToApplicant(app)) {
+  const earlier = app.earlierSites?.length ? earlierSitesPhrase(app.earlierSites) : null;
+  if (earlier) {
     return {
-      subject: `Planning permission – ${address}`,
+      subject,
       body: `${open}
 
-I hope you are well.
+I wrote to you recently about ${earlier}, and I've now seen your scheme at ${address} - the ${scheme} ${when}.
 
-I noticed from the planning register that you have received planning permission to construct ${unitPhrase(app.units)} at ${address}.
+${toOwner ? "Would you be open to selling this one, or are you planning to build it yourself?" : "Would your client be open to selling this one, or are they planning to build it themselves?"}
 
-Are you planning on selling the site or building it out yourself?
-
-If not, I have several clients who would be interested in buying the site. We specialise in finding off market sites for developers, builders and architects with or without planning permission. Our services are completely free as we are retained by our purchasers. Please see our website for a snapshot of our retained clients and recent work at ${IDEALLAND_WEBSITE}.
-
-${chatOffer()}`,
-    };
-  }
-
-  if (hasPlanning) {
-    return {
-      subject: `Planning permission – ${address}`,
-      body: `${open}
-
-I hope you are well.
-
-I noticed from the planning register that your client has received planning permission to construct ${unitPhrase(app.units)} at ${address}.
-
-Is your client planning on selling the site or building it out themselves?
-
-If they are considering a sale, I have several clients who would be interested in buying the site. We specialise in finding off market sites for developers, builders and architects with or without planning permission. We are retained by our purchasers, so there is no fee to your client, and we are also happy to discuss an introduction fee with you. Please see our website for a snapshot of our retained clients and recent work at ${IDEALLAND_WEBSITE}.
+As before, we find sites for developers who are buying in ${buyingArea(council)}. ${fees}
 
 ${chatOffer()}`,
     };
   }
 
   return {
-    subject: `Your application at ${address}`,
+    subject,
     body: `${open}
 
-I came across the application at ${address} for ${unitPhrase(app.units)}.
+I was looking at ${toOwner ? "your site" : "your scheme"} at ${address} - the ${scheme} ${when}.
 
-I just wanted to ask - is your client planning to build it out, or would they consider a sale?
+${toOwner ? "Do you plan to build it yourself, or would you be open to selling?" : "Do you know if your client plans to build it themselves, or would they be open to selling?"}
 
-We are currently working with a number of developers actively acquiring similar schemes in surrounding boroughs and are retained by them, so there's no fee to your client. We are also happy to discuss an introduction fee with you.
-
-${chatOffer()}`,
-  };
-}
-
-function writeFollowOnEmail(
-  app: Parameters<typeof buildApproachEmail>[0],
-  { open, address, earlier, hasPlanning }: { open: string; address: string; earlier: string; hasPlanning: boolean }
-): { subject: string; body: string } {
-  if (hasPlanning && writingToApplicant(app)) {
-    return {
-      subject: `Planning permission - ${address}`,
-      body: `${open}
-
-I hope you are well. I wrote to you recently about ${earlier}, and I noticed from the planning register that you have now received planning permission to construct ${unitPhrase(app.units)} at ${address}.
-
-Would you consider selling this site, or are you planning to build it out yourself?
-
-As before, I have several clients who would be interested in buying a site like this. Our services are completely free as we are retained by our purchasers. You can see a snapshot of our retained clients and recent work at ${IDEALLAND_WEBSITE}.
-
-${chatOffer()}`,
-    };
-  }
-
-  if (hasPlanning) {
-    return {
-      subject: `Planning permission - ${address}`,
-      body: `${open}
-
-I hope you are well. I wrote to you recently about ${earlier}, and I noticed from the planning register that your client has now received planning permission to construct ${unitPhrase(app.units)} at ${address}.
-
-Would your client consider selling this site, or are they planning to build it out themselves?
-
-As before, I have several clients who would be interested in buying a site like this. We are retained by our purchasers, so there is no fee to your client, and we are happy to discuss an introduction fee with you. You can see a snapshot of our retained clients and recent work at ${IDEALLAND_WEBSITE}.
-
-${chatOffer()}`,
-    };
-  }
-
-  return {
-    subject: `Your application at ${address}`,
-    body: `${open}
-
-I wrote to you recently about ${earlier}, and I have now come across your application at ${address} for ${unitPhrase(app.units)}.
-
-Would your client consider selling this one, or are they planning to build it out themselves?
-
-As before, we are working with a number of developers who are actively acquiring schemes like this in surrounding boroughs. They retain us, so there is no fee to your client, and we would be happy to discuss an introduction fee with you.
+We find sites for developers who are buying in ${buyingArea(council)}. If a sale is on the cards, I'd want to look at it properly with ${toOwner ? "you" : "them"} before talking numbers. ${fees}
 
 ${chatOffer()}`,
   };
@@ -570,12 +642,25 @@ export async function sentSitesByAgent(): Promise<Map<string, Array<{ id: string
 }
 
 /** The other sites this lead's agent has had a letter about. */
+/**
+ * The other sites this lead's agent has had a letter about. Another application
+ * on the same site isn't another site ("I wrote to you about X, and now your
+ * application at X"), and a site written about twice is named once.
+ */
 export function earlierSitesFor(
-  lead: { id: string; agentEmail: string | null; agentFirm: string | null },
+  lead: { id: string; address: string; agentEmail: string | null; agentFirm: string | null },
   byAgent: Map<string, Array<{ id: string; address: string }>>
 ): string[] {
   const key = agentKey(lead);
-  return (key ? byAgent.get(key) ?? [] : []).filter((s) => s.id !== lead.id).map((s) => s.address);
+  const site = (address: string) => shortAddress(address).toLowerCase().replace(/[^a-z0-9]/g, "");
+  const seen = new Set([site(lead.address)]);
+  const earlier: string[] = [];
+  for (const s of key ? byAgent.get(key) ?? [] : []) {
+    if (s.id === lead.id || seen.has(site(s.address))) continue;
+    seen.add(site(s.address));
+    earlier.push(s.address);
+  }
+  return earlier;
 }
 
 export async function draftApproach(
@@ -589,13 +674,7 @@ export async function draftApproach(
   }
 
   const { subject, body } = buildApproachEmail({
-    agentName: app.agentName,
-    agentFirm: app.agentFirm,
-    applicant: app.applicant,
-    units: app.units,
-    address: app.address,
-    status: app.status,
-    decision: app.decision,
+    ...app,
     earlierSites: earlierSitesFor(app, options?.byAgent ?? (await sentSitesByAgent())),
   });
 

@@ -11,13 +11,14 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   RefreshCw, Search, MapPin, Mail, Copy, Check,
   AlertTriangle, Send, Inbox, CheckCheck, Undo2, Trash2,
 } from "lucide-react";
 import { isUsableEmail } from "@/lib/email-address";
 import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
-import { addressLooksIncomplete, agentKey, approachMailto, refreshGreeting } from "@/lib/approach-email";
+import { addressLooksIncomplete, agentKey, approachMailto, refreshGreeting, withPersonalLine } from "@/lib/approach-email";
 import { isCoveredCouncil } from "@/lib/coverage";
 import { cameBack, contactSource, formatSentDate, updateApproach, type ApproachChange } from "@/lib/approach-state";
 import { EditContact, LeadNote, ReportProblem } from "@/components/lead-notes";
@@ -91,6 +92,8 @@ export default function ReadyToSendPage() {
   // The last site moved to Sent or discarded, so a mis-click can be undone from right here.
   const [lastMoved, setLastMoved] = useState<{ lead: ReadyLead; to: "sent" | "discarded" } | null>(null);
   const [showDiscarded, setShowDiscarded] = useState(false);
+  // Lucy's own sentence for a letter, typed just before she sends it.
+  const [personalLines, setPersonalLines] = useState<Record<string, string>>({});
 
   const fetchLeads = useCallback(async () => {
     const response = await fetch("/api/sourcing");
@@ -121,8 +124,11 @@ export default function ReadyToSendPage() {
     await fetchLeads();
   };
 
+  const letterBody = (lead: ReadyLead) =>
+    withPersonalLine(refreshGreeting(lead.approachBody), personalLines[lead.id]);
+
   const handleCopy = async (lead: ReadyLead) => {
-    await navigator.clipboard.writeText(`${lead.approachSubject ?? ""}\n\n${refreshGreeting(lead.approachBody)}`);
+    await navigator.clipboard.writeText(`${lead.approachSubject ?? ""}\n\n${letterBody(lead)}`);
     setCopiedId(lead.id);
     setTimeout(() => setCopiedId(null), 2000);
   };
@@ -160,8 +166,20 @@ export default function ReadyToSendPage() {
     <div className="space-y-2">
       <p className="text-xs font-semibold">{lead.approachSubject}</p>
       <p className="text-sm whitespace-pre-wrap bg-muted/40 rounded p-3 leading-relaxed">
-        {refreshGreeting(lead.approachBody)}
+        {letterBody(lead)}
       </p>
+      <label className="block space-y-1">
+        <span className="text-xs text-muted-foreground">
+          Add your own line (optional) &ndash; it goes in after the first paragraph
+        </span>
+        <Textarea
+          rows={2}
+          value={personalLines[lead.id] ?? ""}
+          onChange={(e) => setPersonalLines((lines) => ({ ...lines, [lead.id]: e.target.value }))}
+          placeholder="e.g. I know the road well, we sold a site two doors down last year."
+          className="text-sm"
+        />
+      </label>
     </div>
   );
 
@@ -444,7 +462,7 @@ export default function ReadyToSendPage() {
                       {renderLucyTools(lead)}
                       {renderApproachEmail(lead)}
                       <div className="flex flex-wrap items-center gap-2 pt-1">
-                        <a href={approachMailto(lead.agentEmail ?? "", lead.approachSubject, lead.approachBody)}>
+                        <a href={approachMailto(lead.agentEmail ?? "", lead.approachSubject, letterBody(lead))}>
                           <Button size="sm">
                             <Mail className="w-3.5 h-3.5 mr-1.5" />
                             Open in email

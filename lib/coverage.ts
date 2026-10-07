@@ -69,3 +69,16 @@ export function coverageSummary(): string {
   const names = COVERAGE_AREAS.map((a) => a.council);
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
+
+/**
+ * Where a letter says our buyers are looking. Lucy approved "developers who are
+ * buying in south-east London" (7 Oct 2026) in place of claiming a named buyer.
+ */
+export function buyingArea(council: string): string {
+  const area = coverageArea(council);
+  if (!area) return "London";
+  if (area.region === "surrey") return "Surrey";
+  if (area.council === "Lewisham") return "south-east London";
+  if (area.council === "Hammersmith & Fulham") return "west London";
+  return "south-west London";
+}
