@@ -43,7 +43,7 @@ export async function runSelfCheck(): Promise<SelfCheckResult> {
   let rewritten = 0;
 
   const letters = await prisma.planningApplication.findMany({
-    where: { ...inCoverage, approachStatus: "drafted", approachBody: { not: null }, publicOwner: false },
+    where: { ...inCoverage, approachStatus: { in: ["drafted", "pending"] }, approachBody: { not: null }, publicOwner: false },
   });
 
   const byAgent = await sentSitesByAgent();

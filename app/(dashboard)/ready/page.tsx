@@ -14,11 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   RefreshCw, Search, MapPin, Mail, Copy, Check,
-  AlertTriangle, Send, Inbox, CheckCheck, Undo2, Trash2,
+  AlertTriangle, Send, Inbox, CheckCheck, Undo2, Trash2, Hourglass,
 } from "lucide-react";
 import { isUsableEmail } from "@/lib/email-address";
 import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
-import { addressLooksIncomplete, agentKey, approachMailto, refreshGreeting, withPersonalLine } from "@/lib/approach-email";
+import { addressLooksIncomplete, approachMailto, groupByAgent, sameAgentIn, refreshGreeting, withPersonalLine } from "@/lib/approach-email";
 import { isCoveredCouncil } from "@/lib/coverage";
 import { cameBack, contactSource, formatSentDate, updateApproach, type ApproachChange } from "@/lib/approach-state";
 import { EditContact, LeadNote, ReportProblem } from "@/components/lead-notes";
@@ -62,12 +62,7 @@ function scoreBadgeClass(score: number | null): string {
 }
 
 function sentLettersByAgent(applications: ReadyLead[]): Map<string, ReadyLead[]> {
-  const byAgent = new Map<string, ReadyLead[]>();
-  for (const a of applications) {
-    const key = a.approachStatus === "sent" ? agentKey(a) : null;
-    if (key) byAgent.set(key, [...(byAgent.get(key) ?? []), a]);
-  }
-  return byAgent;
+  return groupByAgent(applications.filter((a) => a.approachStatus === "sent"));
 }
 
 function linkedinSearchUrl(name: string | null, firm: string | null): string {
@@ -90,7 +85,7 @@ export default function ReadyToSendPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [sentByAgent, setSentByAgent] = useState<Map<string, ReadyLead[]>>(new Map());
   // The last site moved to Sent or discarded, so a mis-click can be undone from right here.
-  const [lastMoved, setLastMoved] = useState<{ lead: ReadyLead; to: "sent" | "discarded" } | null>(null);
+  const [lastMoved, setLastMoved] = useState<{ lead: ReadyLead; to: "sent" | "discarded" | "pending" } | null>(null);
   const [showDiscarded, setShowDiscarded] = useState(false);
   // Lucy's own sentence for a letter, typed just before she sends it.
   const [personalLines, setPersonalLines] = useState<Record<string, string>>({});
@@ -120,7 +115,11 @@ export default function ReadyToSendPage() {
 
   const handleApproachState = async (lead: ReadyLead, changes: ApproachChange) => {
     await updateApproach(lead.id, changes);
-    setLastMoved(changes.status === "sent" || changes.status === "discarded" ? { lead, to: changes.status } : null);
+    setLastMoved(
+      changes.status === "sent" || changes.status === "discarded" || changes.status === "pending"
+        ? { lead, to: changes.status }
+        : null
+    );
     await fetchLeads();
   };
 
@@ -144,14 +143,20 @@ export default function ReadyToSendPage() {
   const sentCount = leads.filter((l) => l.approachStatus === "sent").length;
   // Outside Lucy's areas nothing is left to send — those letters live on the Sent page.
   // Council-owned land can't be brokered, so it never reaches the to-send list.
-  const pending = visible.filter(
-    (l) => l.approachStatus !== "sent" && l.approachStatus !== "discarded" && isCoveredCouncil(l.council) && !l.publicOwner
+  const toSend = visible.filter(
+    (l) =>
+      l.approachStatus !== "sent" &&
+      l.approachStatus !== "discarded" &&
+      l.approachStatus !== "pending" &&
+      isCoveredCouncil(l.council) &&
+      !l.publicOwner
   );
+  const onHold = visible.filter((l) => l.approachStatus === "pending");
   const discarded = visible.filter((l) => l.approachStatus === "discarded");
   // Several applications on one site (Betchworth House has six) usually mean one
   // letter to the agent, not six.
   const lettersAtAddress = new Map<string, number>();
-  for (const l of pending) {
+  for (const l of toSend) {
     const key = l.address.toLowerCase().replace(/[^a-z0-9]/g, "");
     lettersAtAddress.set(key, (lettersAtAddress.get(key) ?? 0) + 1);
   }
@@ -159,8 +164,8 @@ export default function ReadyToSendPage() {
     (lettersAtAddress.get(lead.address.toLowerCase().replace(/[^a-z0-9]/g, "")) ?? 1) - 1;
   // A firm's generic inbox is fine; a guessed pattern like "firstname@firm.co.uk"
   // is not — those go to the lookup queue instead of offering a one-click send.
-  const readyToEmail = pending.filter((l) => isUsableEmail(l.agentEmail));
-  const needsLookup = pending.filter((l) => !isUsableEmail(l.agentEmail));
+  const readyToEmail = toSend.filter((l) => isUsableEmail(l.agentEmail));
+  const needsLookup = toSend.filter((l) => !isUsableEmail(l.agentEmail));
 
   const renderApproachEmail = (lead: ReadyLead) => (
     <div className="space-y-2">
@@ -265,8 +270,7 @@ export default function ReadyToSendPage() {
           </p>
         )}
         {(() => {
-          const key = agentKey(lead);
-          const earlier = key ? sentByAgent.get(key) ?? [] : [];
+          const earlier = sameAgentIn(lead, sentByAgent).filter((e) => e.id !== lead.id);
           if (earlier.length === 0) return null;
           return (
             <p className="text-xs text-blue-700">
@@ -356,7 +360,8 @@ export default function ReadyToSendPage() {
           then press <strong>Mark as sent</strong> — it moves to the{" "}
           <Link href="/sent" className="text-blue-600 hover:underline">Sent</Link> page. If you&rsquo;ve
           already written to them another way, press <strong>Already approached</strong>. If you&rsquo;ve
-          decided not to send one, press <strong>Discard</strong>.
+          decided not to send one, press <strong>Discard</strong>. If James is getting in touch with them
+          himself, press <strong>Pending</strong> — it waits at the bottom of this page until you hear back.
         </p>
       </div>
 
@@ -388,6 +393,8 @@ export default function ReadyToSendPage() {
               <strong>{lastMoved.lead.address}</strong>{" "}
               {lastMoved.to === "sent" ? (
                 <>moved to <Link href="/sent" className="underline">Sent</Link>.</>
+              ) : lastMoved.to === "pending" ? (
+                <>put on hold. It&rsquo;s at the bottom of this page under <strong>Pending</strong>.</>
               ) : (
                 <>discarded. It&rsquo;s kept at the bottom of this page under <strong>Discarded</strong>.</>
               )}
@@ -424,7 +431,7 @@ export default function ReadyToSendPage() {
             <div key={i} className="h-40 bg-muted rounded animate-pulse" />
           ))}
         </div>
-      ) : pending.length === 0 && !searchQuery ? (
+      ) : toSend.length === 0 && !searchQuery ? (
         <Card>
           <CardContent className="py-12 text-center space-y-2">
             <Inbox className="w-8 h-8 mx-auto text-muted-foreground" />
@@ -496,6 +503,16 @@ export default function ReadyToSendPage() {
                           size="sm"
                           variant="ghost"
                           className="text-muted-foreground"
+                          onClick={() => handleApproachState(lead, { status: "pending" })}
+                          title="Someone is contacting them another way (e.g. James on WhatsApp) — holds it under Pending until you hear back"
+                        >
+                          <Hourglass className="w-3.5 h-3.5 mr-1.5" />
+                          Pending
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground"
                           onClick={() => handleApproachState(lead, { status: "discarded" })}
                           title="You've decided not to send this one — takes it off the list without counting it as sent"
                         >
@@ -562,6 +579,16 @@ export default function ReadyToSendPage() {
                           size="sm"
                           variant="ghost"
                           className="text-muted-foreground"
+                          onClick={() => handleApproachState(lead, { status: "pending" })}
+                          title="Someone is contacting them another way (e.g. James on WhatsApp) — holds it under Pending until you hear back"
+                        >
+                          <Hourglass className="w-3.5 h-3.5 mr-1.5" />
+                          Pending
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground"
                           onClick={() => handleApproachState(lead, { status: "discarded" })}
                           title="You've decided not to send this one — takes it off the list without counting it as sent"
                         >
@@ -577,6 +604,43 @@ export default function ReadyToSendPage() {
           )}
 
         </div>
+      )}
+
+      {/* Letters on hold while the agent is reached another way. Always open — they're still live. */}
+      {onHold.length > 0 && (
+        <section className="space-y-3 max-w-4xl">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+            <Hourglass className="w-3.5 h-3.5" />
+            Pending ({onHold.length})
+          </h2>
+          {onHold.map((lead) => (
+            <Card key={lead.id}>
+              <CardContent className="py-3 space-y-2">
+                {renderSiteHeader(lead)}
+                {renderContactLine(lead)}
+                {renderLucyTools(lead)}
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => handleApproachState(lead, { status: "sent" })}>
+                    <Send className="w-3.5 h-3.5 mr-1.5" />
+                    Mark as approached
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-muted-foreground"
+                    onClick={async () => {
+                      await updateApproach(lead.id, { status: "not_sent" });
+                      await fetchLeads();
+                    }}
+                  >
+                    <Undo2 className="w-3.5 h-3.5 mr-1.5" />
+                    Back to Ready to Send
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </section>
       )}
 
       {/* Letters Lucy chose not to send — out of the way, but one click brings one back. */}

@@ -2,7 +2,7 @@
 // pages so a tick on one page reads the same everywhere.
 
 export type ApproachChange = {
-  status?: "sent" | "not_sent" | "discarded";
+  status?: "sent" | "not_sent" | "discarded" | "pending";
   outcome?: ApproachOutcomeValue | null;
 };
 

@@ -280,7 +280,7 @@ export default function SourcingPage() {
   const hiddenApproached = hideApproached ? inArea.filter(isApproached).length : 0;
   const unanalyzedCount = inArea.filter((a) => !a.intelligenceSummary || !a.leadScore).length;
   const readyToSendCount = inArea.filter(
-    (a) => a.contactStatus === "found" && a.approachBody && a.approachStatus !== "sent" && a.approachStatus !== "discarded" && !a.publicOwner
+    (a) => a.contactStatus === "found" && a.approachBody && a.approachStatus !== "sent" && a.approachStatus !== "discarded" && a.approachStatus !== "pending" && !a.publicOwner
   ).length;
 
   return (

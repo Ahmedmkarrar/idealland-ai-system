@@ -23,7 +23,7 @@ import { usableEmail } from "@/lib/email-address";
 import { ENTERED_BY_LUCY } from "@/lib/approach-state";
 import { findEmailOnWebsite, guessWebsites } from "@/lib/services/website-email";
 import { councilReference } from "@/lib/planning-portals";
-import { agentKey, formatAddress, plainDashes, shortAddress, timeGreeting } from "@/lib/approach-email";
+import { agentKeys, formatAddress, groupByAgent, sameAgentIn, plainDashes, shortAddress, timeGreeting } from "@/lib/approach-email";
 import {
   extractContactFromPortal,
   resolveIdoxApplicationUrl,
@@ -631,14 +631,9 @@ export async function sentSitesByAgent(): Promise<Map<string, Array<{ id: string
   const sent = await prisma.planningApplication.findMany({
     where: { approachStatus: "sent" },
     orderBy: { approachSentAt: "desc" },
-    select: { id: true, address: true, agentEmail: true, agentFirm: true },
+    select: { id: true, address: true, agentName: true, agentEmail: true, agentFirm: true },
   });
-  const byAgent = new Map<string, Array<{ id: string; address: string }>>();
-  for (const s of sent) {
-    const key = agentKey(s);
-    if (key) byAgent.set(key, [...(byAgent.get(key) ?? []), { id: s.id, address: s.address }]);
-  }
-  return byAgent;
+  return groupByAgent(sent);
 }
 
 /** The other sites this lead's agent has had a letter about. */
@@ -648,14 +643,13 @@ export async function sentSitesByAgent(): Promise<Map<string, Array<{ id: string
  * application at X"), and a site written about twice is named once.
  */
 export function earlierSitesFor(
-  lead: { id: string; address: string; agentEmail: string | null; agentFirm: string | null },
+  lead: { id: string; address: string; agentName: string | null; agentEmail: string | null; agentFirm: string | null },
   byAgent: Map<string, Array<{ id: string; address: string }>>
 ): string[] {
-  const key = agentKey(lead);
   const site = (address: string) => shortAddress(address).toLowerCase().replace(/[^a-z0-9]/g, "");
   const seen = new Set([site(lead.address)]);
   const earlier: string[] = [];
-  for (const s of key ? byAgent.get(key) ?? [] : []) {
+  for (const s of sameAgentIn(lead, byAgent)) {
     if (s.id === lead.id || seen.has(site(s.address))) continue;
     seen.add(site(s.address));
     earlier.push(s.address);
@@ -684,7 +678,7 @@ export async function draftApproach(
       approachSubject: subject,
       approachBody: body,
       // A letter Lucy set aside stays set aside when its wording is refreshed.
-      approachStatus: app.approachStatus === "discarded" ? "discarded" : "drafted",
+      approachStatus: app.approachStatus === "discarded" || app.approachStatus === "pending" ? app.approachStatus : "drafted",
     },
   });
 
@@ -783,11 +777,13 @@ export function isApproachOutcome(v: string): v is ApproachOutcome {
 // before the system found it, or a phone call — so it stops appearing in her
 // to-do lists. "discarded" is a letter Lucy decided not to send (it doesn't look
 // right, or the agent has had enough letters); it leaves Ready to Send without
-// counting as sent. "not_sent" undoes either: the draft goes back to Ready to
+// counting as sent. "pending" is a letter on hold while someone reaches the
+// agent another way (James WhatsApps architects he knows) — off Ready to Send
+// until it's sent or brought back. "not_sent" undoes any of them: the draft goes back to Ready to
 // Send and any outcome recorded against it is cleared.
 export async function setApproachState(
   applicationId: string,
-  changes: { status?: "drafted" | "sent" | "not_sent" | "discarded"; outcome?: ApproachOutcome | null }
+  changes: { status?: "drafted" | "sent" | "not_sent" | "discarded" | "pending"; outcome?: ApproachOutcome | null }
 ): Promise<{ ok: boolean; reason?: string }> {
   const app = await prisma.planningApplication.findUnique({ where: { id: applicationId } });
   if (!app) return { ok: false, reason: "Application not found" };
@@ -822,19 +818,24 @@ export async function setApproachState(
  * Once a letter to an agent is sent (or un-sent), that agent's other waiting
  * letters are reworded to match — the next one mentions the site just written about.
  */
-async function redraftForAgent(app: { id: string; agentEmail: string | null; agentFirm: string | null }): Promise<void> {
-  const key = agentKey(app);
-  if (!key) return;
+async function redraftForAgent(app: {
+  id: string;
+  agentName: string | null;
+  agentEmail: string | null;
+  agentFirm: string | null;
+}): Promise<void> {
+  const keys = new Set(agentKeys(app));
+  if (keys.size === 0) return;
   const waiting = await prisma.planningApplication.findMany({
     where: {
       id: { not: app.id },
-      approachStatus: { in: ["drafted", "discarded"] },
+      approachStatus: { in: ["drafted", "discarded", "pending"] },
       approachBody: { not: null },
-      OR: [{ agentEmail: { not: null } }, { agentFirm: { not: null } }],
+      OR: [{ agentEmail: { not: null } }, { agentFirm: { not: null } }, { agentName: { not: null } }],
     },
-    select: { id: true, agentEmail: true, agentFirm: true },
+    select: { id: true, agentName: true, agentEmail: true, agentFirm: true },
   });
-  const sameAgent = waiting.filter((w) => agentKey(w) === key);
+  const sameAgent = waiting.filter((w) => agentKeys(w).some((k) => keys.has(k)));
   if (sameAgent.length === 0) return;
   const byAgent = await sentSitesByAgent();
   for (const w of sameAgent) await draftApproach(w.id, { force: true, byAgent });

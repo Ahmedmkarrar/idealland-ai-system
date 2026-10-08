@@ -49,16 +49,63 @@ export function approachMailto(
   return `mailto:${to}?${params}`;
 }
 
+// Inboxes anyone can have — two people on gmail.com aren't the same practice.
+const PERSONAL_MAIL_DOMAINS = new Set([
+  "gmail.com", "googlemail.com", "hotmail.com", "hotmail.co.uk", "outlook.com", "live.com", "live.co.uk",
+  "msn.com", "yahoo.com", "yahoo.co.uk", "icloud.com", "me.com", "mac.com", "aol.com", "btinternet.com",
+  "sky.com", "virginmedia.com", "talktalk.net", "protonmail.com", "proton.me", "mail.com",
+]);
+
+export type AgentFields = { agentName: string | null; agentEmail: string | null; agentFirm: string | null };
+
 /**
- * The same agent, by inbox or practice. Shared by the Ready page ("you've
- * already written to this agent") and the letter writer, which words a second
- * letter to the same agent differently.
+ * Every way of recognising the same agent: their inbox, their practice's email
+ * domain, the practice name, and their own name. Shared by the Ready page
+ * ("you've already written to this agent") and the letter writer, which words a
+ * second letter to the same agent differently. Two leads are the same agent if
+ * any key matches — Samuel Tuck was on four leads as sam@barnes-design.com,
+ * info@barnes-design.com and twice with no email at all (8 Oct 2026).
  */
-export function agentKey(lead: { agentEmail: string | null; agentFirm: string | null }): string | null {
+export function agentKeys(lead: AgentFields): string[] {
+  const keys: string[] = [];
   const email = lead.agentEmail?.trim().toLowerCase();
-  if (email) return email;
+  if (email) {
+    keys.push(`email:${email}`);
+    const domain = email.split("@")[1];
+    if (domain && !PERSONAL_MAIL_DOMAINS.has(domain)) keys.push(`domain:${domain}`);
+  }
   const firm = lead.agentFirm?.toLowerCase().replace(/\b(ltd|limited|llp)\b/g, "").replace(/[^a-z0-9]/g, "");
-  return firm || null;
+  if (firm) keys.push(`firm:${firm}`);
+  // A full name only: "Samuel" alone, or "J Smith / K Patel" (two agents), would
+  // match people who aren't the same agent.
+  const name = lead.agentName?.trim().toLowerCase();
+  if (name && !/[/,&]/.test(name) && name.split(/\s+/).length >= 2) {
+    keys.push(`name:${name.replace(/[^a-z ]/g, "").replace(/\s+/g, " ")}`);
+  }
+  return keys;
+}
+
+/** Groups leads under each of their agent keys. */
+export function groupByAgent<T extends AgentFields>(leads: T[]): Map<string, T[]> {
+  const byAgent = new Map<string, T[]>();
+  for (const lead of leads) {
+    for (const key of agentKeys(lead)) byAgent.set(key, [...(byAgent.get(key) ?? []), lead]);
+  }
+  return byAgent;
+}
+
+/** Every lead in the groups that share a key with this agent, once each, in group order. */
+export function sameAgentIn<T extends { id: string }>(lead: AgentFields, byAgent: Map<string, T[]>): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const key of agentKeys(lead)) {
+    for (const other of byAgent.get(key) ?? []) {
+      if (seen.has(other.id)) continue;
+      seen.add(other.id);
+      out.push(other);
+    }
+  }
+  return out;
 }
 
 /**
