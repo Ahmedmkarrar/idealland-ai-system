@@ -12,6 +12,10 @@
 // stored as "14" or "446" and letters read "the application at 14". Rows with no
 // street in the address are now repaired from site_name too.
 //
+// Third pass (8 Oct 2026): Lambeth files streetless sites under the street
+// "Development Control Pseudo Street" with the real location in site_name, and
+// that placeholder reached a letter. Those rows are repaired from site_name too.
+//
 // Usage: node scripts/backfill-address.mjs [--dry]
 
 import Database from "better-sqlite3";
@@ -37,11 +41,15 @@ function decodeEntities(value) {
 // Mirrors buildAddress() in lib/services/sourcing.ts, minus the placeholder
 // fallback — this returns null rather than re-writing the placeholder we're
 // trying to replace.
+const PLACEHOLDER_STREET = /pseudo street/i;
+
 function buildAddress(s) {
-  const parts = [s.site_number, s.street_name, s.secondary_street_name, s.postcode]
+  const street =
+    s.street_name && !PLACEHOLDER_STREET.test(String(s.street_name)) ? s.street_name : null;
+  const parts = [s.site_number, street, s.secondary_street_name, s.postcode]
     .map((p) => (p === null || p === undefined ? "" : decodeEntities(String(p))))
     .filter((p) => p.length > 0);
-  const hasStreet = !!s.street_name && decodeEntities(String(s.street_name)).length > 0;
+  const hasStreet = !!street && decodeEntities(String(street)).length > 0;
   if (parts.length > 0 && (hasStreet || !s.site_name)) return parts.join(", ");
 
   if (s.site_name) {
@@ -49,6 +57,8 @@ function buildAddress(s) {
       .split(/[\r\n]+/)
       .map((line) => decodeEntities(line).replace(/,$/, "").trim())
       .filter((line) => line.length > 0);
+    const postcode = s.postcode ? decodeEntities(String(s.postcode)) : "";
+    if (postcode && !lines.some((line) => line.includes(postcode))) lines.push(postcode);
     if (lines.length > 0) return lines.join(", ");
   }
   return null;
@@ -84,7 +94,8 @@ const db = new Database("prisma/dev.db");
 // Rows still showing the "<Council> (ref <x>)" placeholder, or with no street at
 // all — just a house number or a postcode. PlanIt rows aren't in the London feed.
 const hasNoStreet = (address) => !/[A-Za-z]{3}/.test(address);
-const needsRepair = (address) => address.includes("(ref ") || hasNoStreet(address);
+const needsRepair = (address) =>
+  address.includes("(ref ") || hasNoStreet(address) || PLACEHOLDER_STREET.test(address);
 const pending = db
   .prepare(`SELECT reference, address FROM PlanningApplication WHERE reference NOT LIKE 'PlanIt-%'`)
   .all()

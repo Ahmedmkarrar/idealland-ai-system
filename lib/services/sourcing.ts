@@ -168,15 +168,23 @@ async function resolveMirrorUrl(
   return candidate ? await verifyMirrorUrl(candidate) : null;
 }
 
+// Lambeth's back office files sites with no street of their own ("Rear Of 26
+// Mount Nod Road", "Land Between 12 And 20 Durand Gardens") under the street
+// "Development Control Pseudo Street", and keeps the real location in site_name.
+// Taken at face value it went out in a letter to an agent.
+const PLACEHOLDER_STREET = /pseudo street/i;
+
 export function buildAddress(s: PldSource): string {
-  const parts = [s.site_number, s.street_name, s.secondary_street_name, s.postcode]
+  const street =
+    s.street_name && !PLACEHOLDER_STREET.test(String(s.street_name)) ? s.street_name : null;
+  const parts = [s.site_number, street, s.secondary_street_name, s.postcode]
     .map((p) => (p === null || p === undefined ? "" : decodeEntities(String(p))))
     .filter((p) => p.length > 0);
   // Without a street name the structured fields are just a house number or a
   // postcode — Lewisham fills only site_number and keeps "14 WASTDALE ROAD,
   // LONDON, SE23 1HN" in site_name, which left letters reading "the application
   // at 14". The street is what makes it an address.
-  const hasStreet = !!s.street_name && decodeEntities(String(s.street_name)).length > 0;
+  const hasStreet = !!street && decodeEntities(String(street)).length > 0;
   if (parts.length > 0 && (hasStreet || !s.site_name)) return parts.join(", ");
 
   // Boroughs populate location two different ways. Some fill the structured
@@ -191,6 +199,8 @@ export function buildAddress(s: PldSource): string {
       .split(/[\r\n]+/)
       .map((line) => decodeEntities(line).replace(/,$/, "").trim())
       .filter((line) => line.length > 0);
+    const postcode = s.postcode ? decodeEntities(String(s.postcode)) : "";
+    if (postcode && !lines.some((line) => line.includes(postcode))) lines.push(postcode);
     if (lines.length > 0) return lines.join(", ");
   }
 
