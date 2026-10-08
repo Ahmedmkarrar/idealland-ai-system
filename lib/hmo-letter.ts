@@ -1,0 +1,114 @@
+// The HMO approach letter, posted to the licence holder. Councils publish a
+// correspondence address on the licensing register but never an email, so this
+// one is printed and posted rather than sent from the dashboard.
+//
+// Written in Lucy's voice from her planning-letter rewrite (7 Oct 2026): one
+// question, no claimed buyer, no long dashes, no AI paraphrase. The earlier
+// Claude-written letters ended in an "[IdealLand — name, phone, email]"
+// placeholder and told owners we had "interested parties" lined up (8 Oct 2026).
+import { plainDashes } from "@/lib/approach-email";
+
+const SENDER = {
+  name: "Lucy James",
+  company: "IdealLand",
+  phone: "07973 445901",
+  website: "www.idealland.co.uk",
+};
+
+const NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const inWords = (n: number) => NUMBER_WORDS[n] ?? String(n);
+
+const UK_POSTCODE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\s*$/i;
+const TITLES: Record<string, string> = {
+  mr: "Mr", mrs: "Mrs", ms: "Ms", miss: "Miss", mx: "Mx", dr: "Dr", doctor: "Dr", prof: "Professor", professor: "Professor",
+};
+const COMPANY_WORD = /\b(ltd|limited|llp|plc|company|holdings|properties|property|estates|investments|trust|partnership|association|group|management)\b/i;
+
+/** Residents' associations and freeholder companies hold licences for blocks they manage, not sell. */
+export function notASeller(holderName: string | null): boolean {
+  return !!holderName && /\bresidents?'?\b|\bfreehold\b|\bmanagement company\b|\bRTM\b/i.test(holderName);
+}
+
+export interface HmoLetterInput {
+  holderName: string | null;
+  holderAddress: string | null;
+  propertyAddress: string;
+  council: string;
+  ownerType: string | null;
+  portfolioSize: number;
+}
+
+function personGreeting(holderName: string): string | null {
+  const words = holderName.replace(/[.,]/g, " ").trim().split(/\s+/);
+  const title = TITLES[words[0]?.toLowerCase() ?? ""];
+  if (!title || words.length < 2 || COMPANY_WORD.test(holderName)) return null;
+  return `Dear ${title} ${words[words.length - 1]},`;
+}
+
+/** "Flat B 8 Orde Hall Street London WC1N 3JW" → "Flat B 8 Orde Hall Street, WC1N 3JW". */
+export function propertyLine(address: string): string {
+  const match = address.match(UK_POSTCODE);
+  const postcode = match ? `${match[1].toUpperCase()} ${match[2].toUpperCase()}` : null;
+  const street = (match ? address.slice(0, match.index) : address)
+    .replace(/\b(greater\s+)?london\b/gi, "")
+    .replace(/[\s,]+$/, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return postcode ? `${street}, ${postcode}` : street;
+}
+
+/** The address block at the top of the page: name, then the address with its postcode on its own line. */
+function addressBlock(p: HmoLetterInput): string {
+  const addressee = p.holderName
+    ? /\b(limited|ltd|plc|llp)\.?$/i.test(p.holderName.trim()) ? `The Directors\n${p.holderName}` : p.holderName
+    : "The Licence Holder";
+  if (!p.holderAddress) return addressee;
+  const match = p.holderAddress.match(UK_POSTCODE);
+  const lines = match
+    ? [p.holderAddress.slice(0, match.index).replace(/[\s,]+$/, ""), `${match[1].toUpperCase()} ${match[2].toUpperCase()}`]
+    : [p.holderAddress];
+  return [addressee, ...lines].join("\n");
+}
+
+export function buildHmoLetter(p: HmoLetterInput, today: Date = new Date()): string {
+  const date = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" }).format(today);
+  const open = (p.holderName && p.ownerType !== "company" && personGreeting(p.holderName)) || "Dear Sir or Madam,";
+  const property = propertyLine(p.propertyAddress);
+  const others = p.portfolioSize - 1;
+
+  const intro =
+    others > 0
+      ? `I'm writing about ${property}, one of ${inWords(p.portfolioSize)} HMOs on ${p.council}'s licensing register under your name.`
+      : `I'm writing about ${property}, which ${p.council}'s licensing register shows under your name as a licensed HMO.`;
+  const question =
+    others === 1
+      ? "Would you consider selling it, or the other one, either on its own or together?"
+      : others > 1
+        ? "Would you consider selling it, or any of the others, either one at a time or together?"
+        : "Would you ever consider selling it?";
+
+  const body = `${addressBlock(p)}
+
+${date}
+
+${open}
+
+${intro}
+
+${question}
+
+We find property for buyers who are acquiring HMOs in London. If a sale is on the cards, I'd want to look at it properly with you before talking numbers. There's no fee to you, as our buyers pay us.
+
+If you're not the owner, I'd be grateful if you could pass this on to them.
+
+If you would like to have a chat, please give me a call and I will set up a call with my managing director, James.
+
+Kind regards,
+
+${SENDER.name}
+${SENDER.company}
+${SENDER.phone}
+${SENDER.website}`;
+
+  return plainDashes(body);
+}

@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { RefreshCw, Home, Building2, User, Landmark, ChevronDown, ChevronRight, ShieldAlert, Sparkles, Mail, Copy, Check, Loader2, Briefcase, Clock } from "lucide-react";
+import { RefreshCw, Home, Building2, User, Landmark, ChevronDown, ChevronRight, ShieldAlert, Sparkles, Mail, Copy, Check, Loader2, Printer, Briefcase, Clock } from "lucide-react";
 
 interface PortfolioOwner {
   holderName: string;
@@ -67,6 +67,8 @@ export default function HmoPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   // Per-property expansion + in-flight AI actions for the properties tab.
   const [openProp, setOpenProp] = useState<string | null>(null);
+  // Why a letter wasn't written ("Residents' association…"), shown under the buttons.
+  const [letterNotes, setLetterNotes] = useState<Record<string, string | undefined>>({});
   const [busy, setBusy] = useState<Record<string, "analyze" | "draft" | "enrich" | undefined>>({});
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkEnrichBusy, setBulkEnrichBusy] = useState(false);
@@ -118,15 +120,16 @@ export default function HmoPage() {
     }
   };
 
-  const draftOne = async (id: string) => {
+  const draftOne = async (id: string, force: boolean) => {
     setBusy((b) => ({ ...b, [id]: "draft" }));
     try {
       const r = await fetch("/api/hmo/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ propertyId: id }),
+        body: JSON.stringify({ propertyId: id, force }),
       }).then((res) => res.json());
       if (r.ok && r.letter) patchProperty(id, { approachLetter: r.letter, approachStatus: "draft" });
+      setLetterNotes((n) => ({ ...n, [id]: r.ok ? undefined : r.reason }));
     } finally {
       setBusy((b) => ({ ...b, [id]: undefined }));
     }
@@ -180,6 +183,20 @@ export default function HmoPage() {
     } finally {
       setBulkBusy(false);
     }
+  };
+
+  // One letter on a plain page, so it prints without the dashboard around it.
+  const printLetter = (text: string) => {
+    const win = window.open("", "_blank", "width=800,height=1000");
+    if (!win) return;
+    const pre = win.document.createElement("pre");
+    pre.textContent = text;
+    pre.style.cssText = "font: 12pt/1.5 Georgia, serif; white-space: pre-wrap; margin: 2.5cm;";
+    win.document.title = "IdealLand letter";
+    win.document.body.style.margin = "0";
+    win.document.body.appendChild(pre);
+    win.focus();
+    win.print();
   };
 
   const copyLetter = async (id: string, text: string) => {
@@ -390,7 +407,7 @@ export default function HmoPage() {
                                   {p.intelligenceSummary ? "Re-analyse" : "AI analyse"}
                                 </Button>
                                 {p.ownerType !== "institutional" && (
-                                  <Button size="sm" variant="outline" disabled={!!action} onClick={() => draftOne(p.id)}>
+                                  <Button size="sm" variant="outline" disabled={!!action} onClick={() => draftOne(p.id, !!p.approachLetter)}>
                                     {action === "draft" ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Mail className="w-3.5 h-3.5 mr-1.5" />}
                                     {p.approachLetter ? "Re-draft letter" : "Draft approach letter"}
                                   </Button>
@@ -401,7 +418,14 @@ export default function HmoPage() {
                                     {copied === p.id ? "Copied" : "Copy letter"}
                                   </Button>
                                 )}
+                                {p.approachLetter && (
+                                  <Button size="sm" variant="outline" onClick={() => printLetter(p.approachLetter!)}>
+                                    <Printer className="w-3.5 h-3.5 mr-1.5" />
+                                    Print letter
+                                  </Button>
+                                )}
                               </div>
+                              {letterNotes[p.id] && <p className="text-xs text-amber-700">{letterNotes[p.id]}</p>}
                             </div>
                           </TableCell>
                         </TableRow>

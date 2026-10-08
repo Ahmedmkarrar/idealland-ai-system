@@ -5,14 +5,15 @@
 // human acquisitions analyst would do next:
 //   - analyzeHmoProperty  → a 2-3 sentence acquisition brief + a refined 1-10
 //     score that weighs portfolio context Claude can reason about
-//   - draftApproachLetter → a ready-to-send direct-mail letter to the owner,
-//     tuned to whether they're a company or a named individual
+//   - draftApproachLetter → the posted letter to the licence holder, in Lucy's
+//     wording (lib/hmo-letter.ts — deterministic, no LLM)
 //
 // Both cache on the HmoProperty row and no-op gracefully when ANTHROPIC_API_KEY
 // is absent, exactly like lib/services/intelligence.ts for planning apps.
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
+import { buildHmoLetter, notASeller } from "@/lib/hmo-letter";
 
 function isClaudeConfigured(): boolean {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -136,57 +137,6 @@ ${schemaHint}`,
   }
 }
 
-// A direct-mail approach letter. Plain text (staff print/post it), British
-// English, tuned by owner type. We never fabricate a price or a fake personal
-// connection — it's a clean "are you open to a conversation" letter.
-async function letterWithClaude(p: PropertyForAi): Promise<string | null> {
-  if (!isClaudeConfigured()) return null;
-  const client = newClient();
-
-  const isCompany = p.ownerType === "company";
-  const recipient = p.holderName ?? "the owner";
-  const toneNote = isCompany
-    ? "Address it to the company / its directors. Businesslike, peer-to-peer; you can reference portfolio acquisition directly."
-    : "Address it to a named private individual. Warm, respectful, low-pressure — no jargon, no aggressive sales language.";
-
-  try {
-    const message = await withRetry(() =>
-      client.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 700,
-        messages: [
-          {
-            role: "user",
-            content: `${BRAND_CONTEXT}
-
-Write a direct-mail approach LETTER (plain text, British English) from IdealLand to the owner of a licensed HMO, asking whether they would consider selling. ${toneNote}
-
-Rules:
-- 130-200 words. Professional letterhead-style but human.
-- Reference the property by its address and that you understand they hold ${p.portfolioSize > 1 ? `a number of HMOs (${p.portfolioSize} in our records)` : "this licensed HMO"}.
-- Make clear there is no obligation; you act for active buyers; the conversation is confidential.
-- Do NOT state or imply a specific price, valuation, or guaranteed offer.
-- Do NOT invent facts about the owner. Only use what is given.
-- End with a clear, soft call to action and signature block placeholder "[IdealLand — name, phone, email]".
-- Output ONLY the letter body text. No preamble, no explanation, no markdown.
-
-Owner / property facts:
-Recipient: ${recipient}
-${describe(p)}`,
-          },
-        ],
-      })
-    );
-
-    const content = message.content[0];
-    if (content.type !== "text") return null;
-    const letter = content.text.trim();
-    return letter.length > 0 ? letter : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function analyzeHmoProperty(
   propertyId: string,
   options?: { force?: boolean }
@@ -226,14 +176,15 @@ export async function draftApproachLetter(
     return { ok: false, reason: "Institutional/student operator — not a private-sale target, no letter drafted" };
   }
 
+  if (notASeller(p.holderName)) {
+    return { ok: false, reason: "Residents' association or management company — they manage the block, they don't sell it" };
+  }
+
   if (!options?.force && p.approachLetter) {
     return { ok: true, reason: "Already drafted (pass force=true to re-run)", letter: p.approachLetter };
   }
 
-  if (!isClaudeConfigured()) return { ok: false, reason: "ANTHROPIC_API_KEY not configured" };
-
-  const letter = await letterWithClaude(p as PropertyForAi);
-  if (!letter) return { ok: false, reason: "Claude draft failed" };
+  const letter = buildHmoLetter(p);
 
   await prisma.hmoProperty.update({
     where: { id: propertyId },
