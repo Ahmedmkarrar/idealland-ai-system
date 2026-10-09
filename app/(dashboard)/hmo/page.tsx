@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import QRCode from "qrcode";
-import { QR_CAPTION, whatsappReplyUrl } from "@/lib/hmo-letter";
+import { QR_HEADING, QR_OPTIONS } from "@/lib/hmo-letter";
 import { RefreshCw, Home, Building2, User, Landmark, ChevronDown, ChevronRight, ShieldAlert, Sparkles, Mail, Copy, Check, Loader2, Printer, Briefcase, Clock } from "lucide-react";
 
 interface PortfolioOwner {
@@ -188,7 +188,7 @@ export default function HmoPage() {
   };
 
   // One letter on a plain page, so it prints without the dashboard around it,
-  // with a WhatsApp QR code above the sign-off. The window opens before the QR
+  // with WhatsApp and email QR codes above the sign-off. The window opens before the QR
   // is drawn so the browser treats it as part of the click, not a pop-up.
   const printLetter = async (text: string, propertyAddress: string) => {
     const win = window.open("", "_blank", "width=800,height=1000");
@@ -207,14 +207,23 @@ export default function HmoPage() {
     };
 
     block(letter);
-    const qr = doc.createElement("div");
-    qr.style.cssText = "display: flex; align-items: center; gap: 1em; margin: 0 0 1.5em;";
-    qr.innerHTML = await QRCode.toString(whatsappReplyUrl(propertyAddress), { type: "svg", margin: 0, width: 150 });
-    const caption = doc.createElement("p");
-    caption.textContent = QR_CAPTION;
-    caption.style.cssText = "margin: 0; max-width: 14em;";
-    qr.appendChild(caption);
-    doc.body.appendChild(qr);
+    const heading = doc.createElement("p");
+    heading.textContent = QR_HEADING;
+    heading.style.cssText = "margin: 0 0 0.75em; font-weight: bold;";
+    doc.body.appendChild(heading);
+    const qrRow = doc.createElement("div");
+    qrRow.style.cssText = "display: flex; gap: 3em; margin: 0 0 1.5em;";
+    for (const option of QR_OPTIONS) {
+      const qr = doc.createElement("div");
+      qr.style.cssText = "text-align: center;";
+      qr.innerHTML = await QRCode.toString(option.url(propertyAddress), { type: "svg", margin: 0, width: 130 });
+      const caption = doc.createElement("p");
+      caption.textContent = option.caption;
+      caption.style.cssText = "margin: 0.5em 0 0; white-space: pre-line; font-size: 10.5pt;";
+      qr.appendChild(caption);
+      qrRow.appendChild(qr);
+    }
+    doc.body.appendChild(qrRow);
     if (signOff) block(signOff);
 
     win.focus();

@@ -20,16 +20,31 @@ const inWords = (n: number) => NUMBER_WORDS[n] ?? String(n);
 
 /**
  * Lucy (8 Oct 2026): nobody can click a posted letter, so the printed letter
- * carries a QR code that opens WhatsApp to her with a reply already written,
- * naming the property so she knows which letter it answers.
+ * carries QR codes that open WhatsApp or email to James with a reply already
+ * written, naming the property so he knows which letter it answers. The number
+ * is James's (Lucy, 9 Oct 2026), and she asked for an email option too.
  */
+const JAMES_EMAIL = "james@idealland.co.uk";
+
+const replyText = (propertyAddress: string) =>
+  `Hi James, I got your letter about ${propertyLine(propertyAddress)}. I'd be happy to have a chat.`;
+
 export function whatsappReplyUrl(propertyAddress: string): string {
   const number = "44" + SENDER.phone.replace(/\D/g, "").replace(/^0/, "");
-  const text = `Hi Lucy, I got your letter about ${propertyLine(propertyAddress)}. I'd be happy to have a chat.`;
-  return `https://wa.me/${number}?text=${encodeURIComponent(text)}`;
+  return `https://wa.me/${number}?text=${encodeURIComponent(replyText(propertyAddress))}`;
 }
 
-export const QR_CAPTION = "Or scan this with your phone camera to message me on WhatsApp.";
+export function emailReplyUrl(propertyAddress: string): string {
+  const subject = `Your letter about ${propertyLine(propertyAddress)}`;
+  return `mailto:${JAMES_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(replyText(propertyAddress))}`;
+}
+
+export const QR_HEADING = "Scan a QR code with your phone camera for our direct contact details:";
+
+export const QR_OPTIONS = [
+  { url: whatsappReplyUrl, caption: `WhatsApp or call James\n${SENDER.phone}` },
+  { url: emailReplyUrl, caption: `Email James\n${JAMES_EMAIL}` },
+];
 
 const UK_POSTCODE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\s*$/i;
 const TITLES: Record<string, string> = {
