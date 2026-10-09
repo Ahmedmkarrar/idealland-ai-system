@@ -197,7 +197,7 @@ export default function HmoPage() {
     doc.title = "IdealLand letter";
     doc.body.style.cssText = "margin: 2.5cm; font: 12pt/1.5 Georgia, serif;";
 
-    const signOffAt = text.lastIndexOf("Kind regards,");
+    const signOffAt = Math.max(text.lastIndexOf("Kind regards,"), text.lastIndexOf("Yours faithfully,"));
     const [letter, signOff] = signOffAt > 0 ? [text.slice(0, signOffAt), text.slice(signOffAt)] : [text, ""];
     const block = (content: string) => {
       const pre = doc.createElement("pre");

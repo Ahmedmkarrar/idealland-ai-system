@@ -103,6 +103,8 @@ function addressBlock(p: HmoLetterInput): string {
 export function buildHmoLetter(p: HmoLetterInput, today: Date = new Date()): string {
   const date = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" }).format(today);
   const open = (p.holderName && p.ownerType !== "company" && personGreeting(p.holderName)) || "Dear Sir or Madam,";
+  // Lucy (9 Oct 2026): "Dear Sir or Madam" takes "Yours faithfully", a named greeting "Kind regards".
+  const closing = open === "Dear Sir or Madam," ? "Yours faithfully," : "Kind regards,";
   const property = propertyLine(p.propertyAddress);
   const others = p.portfolioSize - 1;
 
@@ -133,7 +135,7 @@ If you're not the owner, I'd be grateful if you could pass this on to them.
 
 If you would like to have a chat, please give me a call.
 
-Kind regards,
+${closing}
 
 ${SENDER.signature}
 
