@@ -18,6 +18,19 @@ const SENDER = {
 const NUMBER_WORDS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
 const inWords = (n: number) => NUMBER_WORDS[n] ?? String(n);
 
+/**
+ * Lucy (8 Oct 2026): nobody can click a posted letter, so the printed letter
+ * carries a QR code that opens WhatsApp to her with a reply already written,
+ * naming the property so she knows which letter it answers.
+ */
+export function whatsappReplyUrl(propertyAddress: string): string {
+  const number = "44" + SENDER.phone.replace(/\D/g, "").replace(/^0/, "");
+  const text = `Hi Lucy, I got your letter about ${propertyLine(propertyAddress)}. I'd be happy to have a chat.`;
+  return `https://wa.me/${number}?text=${encodeURIComponent(text)}`;
+}
+
+export const QR_CAPTION = "Or scan this with your phone camera to message me on WhatsApp.";
+
 const UK_POSTCODE = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\s*$/i;
 const TITLES: Record<string, string> = {
   mr: "Mr", mrs: "Mrs", ms: "Ms", miss: "Miss", mx: "Mx", dr: "Dr", doctor: "Dr", prof: "Professor", professor: "Professor",

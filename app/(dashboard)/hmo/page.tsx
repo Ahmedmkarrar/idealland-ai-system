@@ -5,6 +5,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import QRCode from "qrcode";
+import { QR_CAPTION, whatsappReplyUrl } from "@/lib/hmo-letter";
 import { RefreshCw, Home, Building2, User, Landmark, ChevronDown, ChevronRight, ShieldAlert, Sparkles, Mail, Copy, Check, Loader2, Printer, Briefcase, Clock } from "lucide-react";
 
 interface PortfolioOwner {
@@ -185,16 +187,36 @@ export default function HmoPage() {
     }
   };
 
-  // One letter on a plain page, so it prints without the dashboard around it.
-  const printLetter = (text: string) => {
+  // One letter on a plain page, so it prints without the dashboard around it,
+  // with a WhatsApp QR code above the sign-off. The window opens before the QR
+  // is drawn so the browser treats it as part of the click, not a pop-up.
+  const printLetter = async (text: string, propertyAddress: string) => {
     const win = window.open("", "_blank", "width=800,height=1000");
     if (!win) return;
-    const pre = win.document.createElement("pre");
-    pre.textContent = text;
-    pre.style.cssText = "font: 12pt/1.5 Georgia, serif; white-space: pre-wrap; margin: 2.5cm;";
-    win.document.title = "IdealLand letter";
-    win.document.body.style.margin = "0";
-    win.document.body.appendChild(pre);
+    const doc = win.document;
+    doc.title = "IdealLand letter";
+    doc.body.style.cssText = "margin: 2.5cm; font: 12pt/1.5 Georgia, serif;";
+
+    const signOffAt = text.lastIndexOf("Kind regards,");
+    const [letter, signOff] = signOffAt > 0 ? [text.slice(0, signOffAt), text.slice(signOffAt)] : [text, ""];
+    const block = (content: string) => {
+      const pre = doc.createElement("pre");
+      pre.textContent = content.trimEnd();
+      pre.style.cssText = "font: inherit; white-space: pre-wrap; margin: 0 0 1.5em;";
+      doc.body.appendChild(pre);
+    };
+
+    block(letter);
+    const qr = doc.createElement("div");
+    qr.style.cssText = "display: flex; align-items: center; gap: 1em; margin: 0 0 1.5em;";
+    qr.innerHTML = await QRCode.toString(whatsappReplyUrl(propertyAddress), { type: "svg", margin: 0, width: 150 });
+    const caption = doc.createElement("p");
+    caption.textContent = QR_CAPTION;
+    caption.style.cssText = "margin: 0; max-width: 14em;";
+    qr.appendChild(caption);
+    doc.body.appendChild(qr);
+    if (signOff) block(signOff);
+
     win.focus();
     win.print();
   };
@@ -419,7 +441,7 @@ export default function HmoPage() {
                                   </Button>
                                 )}
                                 {p.approachLetter && (
-                                  <Button size="sm" variant="outline" onClick={() => printLetter(p.approachLetter!)}>
+                                  <Button size="sm" variant="outline" onClick={() => printLetter(p.approachLetter!, p.propertyAddress)}>
                                     <Printer className="w-3.5 h-3.5 mr-1.5" />
                                     Print letter
                                   </Button>
