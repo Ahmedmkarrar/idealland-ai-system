@@ -9,7 +9,9 @@
 import { plainDashes } from "@/lib/approach-email";
 
 const SENDER = {
-  name: "Lucy James",
+  signature: "James",
+  name: "James Armstrong",
+  title: "Managing Director",
   company: "IdealLand",
   phone: "07973 445901",
   website: "www.idealland.co.uk",
@@ -129,11 +131,14 @@ We find property for buyers who are acquiring HMOs in London. If a sale is on th
 
 If you're not the owner, I'd be grateful if you could pass this on to them.
 
-If you would like to have a chat, please give me a call and I will set up a call with my managing director, James.
+If you would like to have a chat, please give me a call.
 
 Kind regards,
 
+${SENDER.signature}
+
 ${SENDER.name}
+${SENDER.title}
 ${SENDER.company}
 ${SENDER.phone}
 ${SENDER.website}`;
