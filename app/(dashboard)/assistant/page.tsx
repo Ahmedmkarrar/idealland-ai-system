@@ -20,6 +20,13 @@ const SUGGESTIONS = [
   "Show me the highest-scored sites in Hammersmith & Fulham",
 ];
 
+// Claude marks emphasis as **bold**; shown raw, the asterisks littered every answer.
+function withBold(text: string): React.ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith("**") && part.endsWith("**") && part.length > 4 ? <strong key={i}>{part.slice(2, -2)}</strong> : part
+  );
+}
+
 export default function AssistantPage() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -117,7 +124,7 @@ export default function AssistantPage() {
                 m.role === "user" ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-muted rounded-tl-sm"
               }`}
             >
-              {m.content}
+              {m.role === "user" ? m.content : withBold(m.content)}
             </div>
           </div>
         ))}
