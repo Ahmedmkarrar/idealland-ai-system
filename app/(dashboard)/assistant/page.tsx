@@ -14,10 +14,10 @@ const GREETING =
   "Hi Lucy — I'm your sourcing assistant. Ask me things like the examples below, and I'll pull it straight from the live data. I can also find an agent's contact or draft an approach for you.";
 
 const SUGGESTIONS = [
-  "House schemes in Croydon with planning, up to 9 units",
+  "House schemes in Kingston with planning, up to 9 units",
   "Which of my top leads still need a contact?",
   "How many ready-to-send packs do I have?",
-  "Show me the highest-scored sites in Greenwich",
+  "Show me the highest-scored sites in Hammersmith & Fulham",
 ];
 
 export default function AssistantPage() {

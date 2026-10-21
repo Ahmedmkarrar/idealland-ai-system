@@ -89,6 +89,16 @@ const STATUS_TIMELINE_ICON: Record<string, React.ReactNode> = {
   submitted: <Clock className="w-4 h-4 text-blue-500" />,
 };
 
+// Base UI shows the raw value in a closed select unless it is given the labels —
+// Lucy was reading "submitted", "5" and "all" instead of what each filter does.
+const STATUS_LABELS = { submitted: "Live opportunities", decided: "Already decided", all: "Everything" };
+const SCORE_LABELS = { "8": "Score 8+ (best only)", "7": "Score 7+", "6": "Score 6+", "5": "Score 5+ (default)", "0": "Show everything" };
+const AREA_LABELS: Record<string, string> = {
+  all: "All my areas",
+  ...Object.fromEntries(COVERAGE_AREAS.map((area) => [area.council, area.council])),
+};
+const SORT_LABELS = { submitted: "Newest first", score: "Highest score", units: "Most units" };
+
 export default function SourcingPage() {
   const [applications, setApplications] = useState<PlanningApplication[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -380,7 +390,7 @@ export default function SourcingPage() {
             {/* Half the database is decided applications kept for research. They are
                 not things to act on, so the working list defaults to live ones. The
                 old approved/refused/withdrawn options never matched a stored value. */}
-            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "submitted")}>
+            <Select items={STATUS_LABELS} value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "submitted")}>
               <SelectTrigger className="w-full sm:w-48">
                 <SelectValue placeholder="Which sites" />
               </SelectTrigger>
@@ -390,7 +400,7 @@ export default function SourcingPage() {
                 <SelectItem value="all">Everything</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={String(minScore)} onValueChange={(v) => setMinScore(Number(v ?? 5))}>
+            <Select items={SCORE_LABELS} value={String(minScore)} onValueChange={(v) => setMinScore(Number(v ?? 5))}>
               <SelectTrigger className="w-full sm:w-44">
                 <SelectValue placeholder="Minimum score" />
               </SelectTrigger>
@@ -402,7 +412,7 @@ export default function SourcingPage() {
                 <SelectItem value="0">Show everything</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={areaFilter} onValueChange={(v) => setAreaFilter(v ?? "all")}>
+            <Select items={AREA_LABELS} value={areaFilter} onValueChange={(v) => setAreaFilter(v ?? "all")}>
               <SelectTrigger className="w-full sm:w-48">
                 <SelectValue placeholder="Area" />
               </SelectTrigger>
@@ -415,7 +425,7 @@ export default function SourcingPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={sortBy} onValueChange={(v) => setSortBy(v ?? "submitted")}>
+            <Select items={SORT_LABELS} value={sortBy} onValueChange={(v) => setSortBy(v ?? "submitted")}>
               <SelectTrigger className="w-full sm:w-36">
                 <SelectValue placeholder="Sort by" />
               </SelectTrigger>

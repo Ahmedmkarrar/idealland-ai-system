@@ -85,6 +85,10 @@ function isReadyToCopy(status: string): boolean {
   return status === "approved" || status === "published" || status === "scheduled";
 }
 
+// Without the labels a closed Base UI select shows its raw value ("all", "draft").
+const PLATFORM_LABELS = { all: "All platforms", instagram: "Instagram", linkedin: "LinkedIn", tiktok: "TikTok", facebook: "Facebook" };
+const STATUS_LABELS = { all: "All statuses", draft: "Draft", approved: "Approved", rejected: "Rejected" };
+
 export default function SocialPage() {
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [pendingReviewPosts, setPendingReviewPosts] = useState<SocialPost[]>([]);
@@ -266,7 +270,7 @@ export default function SocialPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-base">Content Feed</CardTitle>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <Select value={platformFilter} onValueChange={(v) => setPlatformFilter(v ?? "all")}>
+              <Select items={PLATFORM_LABELS} value={platformFilter} onValueChange={(v) => setPlatformFilter(v ?? "all")}>
                 <SelectTrigger className="w-full sm:w-36">
                   <SelectValue placeholder="Platform" />
                 </SelectTrigger>
@@ -278,7 +282,7 @@ export default function SocialPage() {
                   <SelectItem value="facebook">Facebook</SelectItem>
                 </SelectContent>
               </Select>
-              <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "all")}>
+              <Select items={STATUS_LABELS} value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? "all")}>
                 <SelectTrigger className="w-full sm:w-36">
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
