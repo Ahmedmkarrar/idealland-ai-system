@@ -4,6 +4,11 @@ import { scanCouncils } from "@/lib/services/sourcing";
 import { checkDecisions } from "@/lib/services/decisions";
 import { retrieveAllPendingDocuments } from "@/lib/services/documents";
 
+// Every call out (DataHub, PlanIt, Claude) must be live. Under the default
+// caching a long-running server answered the 4-hourly scan with stale DataHub
+// results from 10 to 21 Oct, and London leads stopped arriving.
+export const dynamic = "force-dynamic";
+
 // User-triggered cron — bypasses the bearer-secret check that /api/cron uses
 // because the dashboard's middleware-gated session already authenticates the
 // caller. Runs the same three services as the scheduled cron.

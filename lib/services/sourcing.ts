@@ -253,28 +253,34 @@ async function fetchFromPLD(opts?: {
       query: { bool: { filter, ...decisionClause } },
     });
 
-    let hits: Array<{ _source?: PldSource }> = [];
-    try {
-      const res = await withRetry(() =>
-        fetch(PLD_SEARCH_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body,
-          signal: AbortSignal.timeout(25000),
-        })
-      );
-      if (!res.ok) break;
-      const data = (await res.json()) as {
-        hits?: { hits?: Array<{ _source?: PldSource }> };
-      };
-      hits = data.hits?.hits ?? [];
-    } catch {
-      break;
-    }
+    // A failed page throws rather than ending the scan quietly. From 10 to 21 Oct
+    // the long-running server's requests all failed, each run reported "found 0",
+    // and London leads stopped for eleven days with nothing on the Error Log.
+    // Throwing marks the run failed, so the next one can be seen to retry.
+    const res = await withRetry(async () => {
+      const r = await fetch(PLD_SEARCH_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body,
+        cache: "no-store",
+        signal: AbortSignal.timeout(25000),
+      });
+      if (!r.ok) throw new Error(`Planning London DataHub returned HTTP ${r.status} (page from ${from})`);
+      return r;
+    });
+    const data = (await res.json()) as {
+      hits?: { hits?: Array<{ _source?: PldSource }> };
+    };
+    const hits = data.hits?.hits ?? [];
 
+    // London-wide there are hundreds of 1-9 unit updates in any week, so an empty
+    // first page is a broken feed, not a quiet one.
+    if (from === 0 && hits.length === 0) {
+      throw new Error(`Planning London DataHub returned no applications for the last ${windowDays} days`);
+    }
     if (hits.length === 0) break;
 
     for (const hit of hits) {
@@ -325,7 +331,15 @@ const TINY_APPLICATION_PATTERNS = [
   /\binternal\s+alterations?\b/i,
 ];
 
+// A conversion that creates homes usually lists the extensions it needs too —
+// "conversion of the existing building into three self-contained flats, involving
+// erection of a single storey rear extension" (Lambeth 26/02800/FUL). Taken alone
+// the extension wording dropped four genuine London schemes in one week.
+const CREATES_HOMES =
+  /\b(into|to\s+form|to\s+create|to\s+provide|creation\s+of|provision\s+of)\s+(?:[\w.-]+\s+){0,4}?(self[- ]contained|flats?|dwellings?|dwellinghouses?|houses|maisonettes?|apartments?|homes)\b/i;
+
 function looksLikeTinyApplication(description: string): boolean {
+  if (CREATES_HOMES.test(description)) return false;
   return TINY_APPLICATION_PATTERNS.some((p) => p.test(description));
 }
 

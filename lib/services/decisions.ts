@@ -36,6 +36,7 @@ async function fetchDecisions(ids: string[]): Promise<PldDecision[]> {
       _source: ["id", "decision", "decision_date"],
       query: { bool: { filter: [{ terms: { id: ids } }] } },
     }),
+    cache: "no-store",
     signal: AbortSignal.timeout(30000),
   });
   if (!res.ok) throw new Error(`Planning London DataHub returned ${res.status}`);

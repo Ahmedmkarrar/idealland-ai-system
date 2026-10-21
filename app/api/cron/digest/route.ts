@@ -7,6 +7,11 @@ import { runSelfCheck } from "@/lib/services/self-check";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
+// Every call out (DataHub, PlanIt, Claude) must be live. Under the default
+// caching a long-running server answered the 4-hourly scan with stale DataHub
+// results from 10 to 21 Oct, and London leads stopped arriving.
+export const dynamic = "force-dynamic";
+
 // Contact research runs once a day, here rather than in the 4-hourly scan, and
 // on a deliberately small batch: each lookup is a Claude call plus up to five web
 // searches, so an unbounded sweep of ~2,000 leads would cost hundreds a month for

@@ -19,7 +19,7 @@ import {
 import { isUsableEmail } from "@/lib/email-address";
 import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
 import { addressLooksIncomplete, approachMailto, groupByAgent, sameAgentIn, refreshGreeting, withPersonalLine } from "@/lib/approach-email";
-import { isCoveredCouncil } from "@/lib/coverage";
+import { coverageArea, isCoveredCouncil, type CoverageRegion } from "@/lib/coverage";
 import { cameBack, contactSource, formatSentDate, updateApproach, type ApproachChange } from "@/lib/approach-state";
 import { EditContact, LeadNote, ReportProblem } from "@/components/lead-notes";
 import { freshLabel, freshPermissionAge } from "@/lib/fresh-permission";
@@ -82,6 +82,7 @@ export default function ReadyToSendPage() {
   const [leads, setLeads] = useState<ReadyLead[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [area, setArea] = useState<CoverageRegion | "all">("all");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [sentByAgent, setSentByAgent] = useState<Map<string, ReadyLead[]>>(new Map());
   // The last site moved to Sent or discarded, so a mis-click can be undone from right here.
@@ -139,18 +140,24 @@ export default function ReadyToSendPage() {
           .some((field) => field!.toLowerCase().includes(searchQuery.toLowerCase()))
       : true;
 
-  const visible = leads.filter(matchesSearch);
-  const sentCount = leads.filter((l) => l.approachStatus === "sent").length;
+  // Lucy works the London boroughs first; Surrey is a click away rather than mixed in.
+  const matchesArea = (lead: ReadyLead) => area === "all" || coverageArea(lead.council)?.region === area;
+
   // Outside Lucy's areas nothing is left to send — those letters live on the Sent page.
   // Council-owned land can't be brokered, so it never reaches the to-send list.
-  const toSend = visible.filter(
-    (l) =>
-      l.approachStatus !== "sent" &&
-      l.approachStatus !== "discarded" &&
-      l.approachStatus !== "pending" &&
-      isCoveredCouncil(l.council) &&
-      !l.publicOwner
-  );
+  const isToSend = (l: ReadyLead) =>
+    l.approachStatus !== "sent" &&
+    l.approachStatus !== "discarded" &&
+    l.approachStatus !== "pending" &&
+    isCoveredCouncil(l.council) &&
+    !l.publicOwner;
+
+  const searched = leads.filter(matchesSearch);
+  const toSendByRegion = (region: CoverageRegion) =>
+    searched.filter((l) => isToSend(l) && coverageArea(l.council)?.region === region).length;
+  const visible = searched.filter(matchesArea);
+  const sentCount = leads.filter((l) => l.approachStatus === "sent").length;
+  const toSend = visible.filter(isToSend);
   const onHold = visible.filter((l) => l.approachStatus === "pending");
   const discarded = visible.filter((l) => l.approachStatus === "discarded");
   // Several applications on one site (Betchworth House has six) usually mean one
@@ -423,6 +430,23 @@ export default function ReadyToSendPage() {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {([
+          { value: "all", label: "All areas", count: toSendByRegion("london") + toSendByRegion("surrey") },
+          { value: "london", label: "London", count: toSendByRegion("london") },
+          { value: "surrey", label: "Surrey", count: toSendByRegion("surrey") },
+        ] as const).map((option) => (
+          <Button
+            key={option.value}
+            size="sm"
+            variant={area === option.value ? "default" : "outline"}
+            onClick={() => setArea(option.value)}
+          >
+            {option.label} ({option.count})
+          </Button>
+        ))}
       </div>
 
       {isLoading ? (

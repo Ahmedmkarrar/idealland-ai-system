@@ -8,6 +8,11 @@ import { scanSurrey } from "@/lib/services/planit";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
+// Every call out (DataHub, PlanIt, Claude) must be live. Under the default
+// caching a long-running server answered the 4-hourly scan with stale DataHub
+// results from 10 to 21 Oct, and London leads stopped arriving.
+export const dynamic = "force-dynamic";
+
 // How many unanalysed leads to AI-score per cron run. Keeps each run bounded
 // while steadily clearing any backlog (newest submissions first). Tunable via
 // CRON_ANALYZE_LIMIT; Haiku keeps this a few cents per run.
