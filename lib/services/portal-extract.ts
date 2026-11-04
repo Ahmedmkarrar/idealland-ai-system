@@ -302,6 +302,50 @@ function parseIdoxDetails(html: string): PortalContact | null {
   };
 }
 
+/**
+ * The application form PDF from an Idox register's documents tab, or null. Idox
+ * serves its files only to the session that opened the documents tab, so the
+ * cookie from that page goes with the download. Most councils publish the form
+ * ("Application form redacted"): contact details are blanked, but the agent's
+ * name and practice stay — on the contacts tab Lewisham often has neither.
+ */
+async function idoxApplicationForm(councilUrl: string): Promise<ArrayBuffer | null> {
+  const docsUrl = councilUrl.replace(/([?&])activeTab=[^&]*/gi, "$1activeTab=documents");
+  const url = /activeTab=documents/i.test(docsUrl) ? docsUrl : `${docsUrl}${docsUrl.includes("?") ? "&" : "?"}activeTab=documents`;
+  try {
+    const page = await fetch(url, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(25000) });
+    if (!page.ok) return null;
+    const cookie = page.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+    const html = await page.text();
+    const row = [...html.matchAll(/<tr[\s\S]*?<\/tr>/gi)]
+      .map((m) => m[0])
+      .find((r) => /files\//i.test(r) && /application[\s_]+form/i.test(r));
+    const href = row?.match(/href="([^"]*files\/[^"]+)"/i)?.[1];
+    if (!href) return null;
+    await sleep(PORTAL_REQUEST_DELAY_MS);
+    const pdf = await fetch(new URL(decode(href), url), {
+      headers: { "User-Agent": UA, Cookie: cookie, Referer: url },
+      signal: AbortSignal.timeout(45000),
+    });
+    if (!pdf.ok || !/pdf/i.test(pdf.headers.get("content-type") ?? "")) return null;
+    return await pdf.arrayBuffer();
+  } catch {
+    return null;
+  }
+}
+
+/** The agent on an application form, kept only when it reads as a real person or practice. */
+async function contactFromForm(pdf: ArrayBuffer | null): Promise<PortalContact | null> {
+  const form = pdf ? await formAgentFromPdf(pdf) : null;
+  if (!form) return null;
+  // Some agents type the practice into the name boxes ("Homz" / "Planning").
+  const person = form.firstName && form.surname ? `${form.firstName} ${form.surname}` : null;
+  const agentName = person && readsLikePerson(person) ? tidyName(person) : null;
+  const agentFirm = form.company ? tidyName(form.company) : null;
+  if (!agentName && !agentFirm) return null;
+  return { agentName, agentFirm, agentEmail: null, agentPhone: null, source: "Council planning register (application form)" };
+}
+
 // ---------------------------------------------------------------------------
 // Northgate Planning Explorer (Wandsworth) — `<span>Agent</span>Hedley Clark Ltd`
 // ---------------------------------------------------------------------------
@@ -432,7 +476,21 @@ export async function extractContactFromPortal(
 
     await sleep(PORTAL_REQUEST_DELAY_MS);
     const detailsHtml = await fetchHtml(idoxTabUrl(url, "details")!);
-    return mergeContacts(contacts, detailsHtml ? parseIdoxDetails(detailsHtml) : null);
+    const register = mergeContacts(contacts, detailsHtml ? parseIdoxDetails(detailsHtml) : null);
+    if (register?.agentEmail && register.agentName) return register;
+
+    // No email and no person on the register: the application form names the
+    // agent on most of these (Lewisham DC/26/142771: Peter Swain, Proun Architects).
+    await sleep(PORTAL_REQUEST_DELAY_MS);
+    const form = await contactFromForm(await idoxApplicationForm(url));
+    if (!form) return register;
+    if (!register) return form;
+    return {
+      ...register,
+      agentName: register.agentName ?? form.agentName,
+      agentFirm: register.agentFirm ?? form.agentFirm,
+      source: `${register.source}; ${form.source}`,
+    };
   }
 
   const agileId = agileIdFromUrl(url);
@@ -446,19 +504,11 @@ export async function extractContactFromPortal(
     // The register keeps less than the form: "SH BHATIA" for Mr Ash Bhatia of
     // Silverline Architects Ltd. Without a clear person, read the form.
     if (!contact.agentName || contact.source.includes(NAME_FROM_MAILBOX)) {
-      const pdf = await wandsworthApplicationForm(agileId).catch(() => null);
-      const form = pdf ? await formAgentFromPdf(pdf) : null;
-      // Some agents type the practice into the name boxes ("Homz" / "Planning").
-      const formPerson = form?.firstName && form.surname ? `${form.firstName} ${form.surname}` : null;
-      if (formPerson && readsLikePerson(formPerson)) {
-        contact = {
-          ...contact,
-          agentName: tidyName(formPerson),
-          agentFirm: form!.company ? tidyName(form!.company) : contact.agentFirm,
-          source: "Council planning register (application form)",
-        };
-      } else if (form?.company && !contact.agentFirm) {
-        contact = { ...contact, agentFirm: tidyName(form.company) };
+      const form = await contactFromForm(await wandsworthApplicationForm(agileId).catch(() => null));
+      if (form?.agentName) {
+        contact = { ...contact, agentName: form.agentName, agentFirm: form.agentFirm ?? contact.agentFirm, source: form.source };
+      } else if (form?.agentFirm && !contact.agentFirm) {
+        contact = { ...contact, agentFirm: form.agentFirm };
       }
     }
     return contact.agentEmail || contact.agentFirm || contact.agentName ? contact : null;

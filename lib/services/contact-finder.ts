@@ -28,6 +28,7 @@ import {
   extractContactFromPortal,
   resolveIdoxApplicationUrl,
   PortalBusyError,
+  isSupportedPortal,
   type PortalContact,
 } from "@/lib/services/portal-extract";
 import { buyingArea, inCoverage, PRIORITY_COUNCILS, worthWorking } from "@/lib/coverage";
@@ -708,6 +709,10 @@ function portalHost(url: string | null): string | null {
   }
 }
 
+// Stuck leads given a second read per daily run, and how long they wait first.
+const RETRY_PER_RUN = Number(process.env.CONTACT_RETRY_PER_RUN ?? 5);
+const RETRY_AFTER_DAYS = Number(process.env.CONTACT_RETRY_AFTER_DAYS ?? 7);
+
 export async function bulkFindContacts(options?: {
   minScore?: number;
   limit?: number;
@@ -750,6 +755,29 @@ export async function bulkFindContacts(options?: {
         ...(await prisma.planningApplication.findMany({ where: { ...base, ...group, ...link }, orderBy: order, take, select }))
       );
     }
+  }
+
+  // Leads that came back "no agent" a week or more ago, on a register we can
+  // read. Registers fill in late — the contacts tab, the form — and on 4 Nov a
+  // second read named agents on 3 of 9 such leads (Lewisham, H&F). Unreadable
+  // registers (Merton) are left out: a retry there only repeats a paid search.
+  const retryRoom = Math.min(RETRY_PER_RUN, limit);
+  if (retryRoom > 0) {
+    const stale = await prisma.planningApplication.findMany({
+      where: {
+        ...base,
+        contactStatus: "not_found",
+        councilUrl: { not: null },
+        OR: [{ contactResearchedAt: null }, { contactResearchedAt: { lt: new Date(Date.now() - RETRY_AFTER_DAYS * 86_400_000) } }],
+      },
+      orderBy: [{ contactResearchedAt: "asc" }, ...order],
+      take: 50,
+      select,
+    });
+    // Wandsworth's old Northgate links are dead; leads still on one weren't found
+    // on the new register (2026/1260, 2026/2930) and would only time out.
+    const readable = stale.filter((c) => isSupportedPortal(c.councilUrl) && !/wandsworth\.gov\.uk\/Northgate/i.test(c.councilUrl ?? ""));
+    candidates.push(...readable.slice(0, retryRoom));
   }
 
   let found = 0;
