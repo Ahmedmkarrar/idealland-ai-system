@@ -386,9 +386,16 @@ export async function scanCouncils(opts?: {
 
     const fresh: ScrapedApplication[] = [];
     for (const app of relevant) {
-      const existing = await prisma.planningApplication.findUnique({
-        where: { reference: app.reference },
-      });
+      const existing =
+        (await prisma.planningApplication.findUnique({ where: { reference: app.reference } })) ??
+        // The same site may already be stored from the council's own register
+        // (Wandsworth, lib/services/agile.ts) under the council's reference.
+        (app.lpaReference
+          ? await prisma.planningApplication.findFirst({
+              where: { council: coverageArea(app.council)?.council ?? app.council, lpaReference: app.lpaReference },
+              select: { id: true },
+            })
+          : null);
       if (!existing) fresh.push(app);
     }
 

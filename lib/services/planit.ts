@@ -166,11 +166,15 @@ function dateWindows(days: number): PlanitWindow[] {
   return windows;
 }
 
-function looksLikeScheme(record: PlanitRecord): boolean {
-  const description = record.description ?? "";
+/** Whether a description (and the council's application type) reads like a scheme, not paperwork. Shared with the Wandsworth source. */
+export function looksLikeSchemeText(description: string, appType: string | null): boolean {
   if (!description.trim()) return false;
-  if (record.app_type && HOUSEHOLDER_TYPES.test(record.app_type) && !/\bnew\s+dwelling/i.test(description)) return false;
+  if (appType && HOUSEHOLDER_TYPES.test(appType) && !/\bnew\s+dwelling/i.test(description)) return false;
   return !NOT_A_SCHEME.some((pattern) => pattern.test(description));
+}
+
+function looksLikeScheme(record: PlanitRecord): boolean {
+  return looksLikeSchemeText(record.description ?? "", record.app_type);
 }
 
 // ---------------------------------------------------------------------------

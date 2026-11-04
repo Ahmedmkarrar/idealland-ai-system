@@ -5,6 +5,7 @@ import { checkDecisions } from "@/lib/services/decisions";
 import { retrieveAllPendingDocuments } from "@/lib/services/documents";
 import { bulkAnalyze } from "@/lib/services/intelligence";
 import { scanSurrey } from "@/lib/services/planit";
+import { scanWandsworth } from "@/lib/services/agile";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -36,6 +37,9 @@ export async function GET(request: NextRequest) {
     // Surrey comes from PlanIt, which is scanned at most once a day however often
     // this cron fires — see lib/services/planit.ts.
     scanSurrey(),
+    // Wandsworth left the DataHub and PlanIt in Sep 2026; read from its own
+    // register, once a day — see lib/services/agile.ts.
+    scanWandsworth(),
   ]);
 
   const pick = (r: PromiseSettledResult<unknown>) =>
@@ -52,6 +56,7 @@ export async function GET(request: NextRequest) {
     ran: new Date().toISOString(),
     sourcing: pick(results[0]),
     surrey: pick(results[3]),
+    wandsworth: pick(results[4]),
     decisions: pick(results[1]),
     documents: pick(results[2]),
     analysis,

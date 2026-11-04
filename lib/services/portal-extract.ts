@@ -33,6 +33,7 @@
 // harvesting beyond the leads actually being worked.
 
 import { withRetry } from "@/lib/retry";
+import { agileGet, agileIdFromUrl, text, type AgileDetail } from "@/lib/services/agile-api";
 import { usableEmail } from "@/lib/email-address";
 
 export interface PortalContact {
@@ -42,6 +43,42 @@ export interface PortalContact {
   agentPhone: string | null;
   /** Which platform and section it came from, for the audit trail shown to staff. */
   source: string;
+}
+
+// Agile Applications (Wandsworth since Sep 2026) — JSON, not HTML. Read from
+// Wandsworth's register on 4 Nov 2026:
+//   agentSurname "Rackham Planning Ltd", agentName "Mrs Kathryn Wrigley" — firm + person
+//   agentSurname "ROK", agentName "ROK Planning"                          — firm only
+//   agentSurname "Ruth Harding", agentName "", email ruth@…               — person only
+// A letter opens "Dear <name>", so a value only counts as a person when it
+// doesn't read like a practice and, standing alone, the email confirms it.
+const PRACTICE_WORDS =
+  /\b(planning|planners?|architects?|architecture|architectural|design|designs|ltd|limited|llp|plc|associates|studio|consult\w*|partners(hip)?|group|surveyors?|homes|developments?|properties|estates?|services|uk|co)\b/i;
+
+function readsLikePractice(value: string): boolean {
+  return PRACTICE_WORDS.test(value) || !/\s/.test(value.trim()) || value === value.toUpperCase();
+}
+
+function emailNamesPerson(email: string | null, person: string): boolean {
+  const local = email?.split("@")[0]?.toLowerCase() ?? "";
+  const words = person.toLowerCase().replace(/^(mr|mrs|ms|miss|dr)\.?\s+/, "").split(/\s+/).filter((w) => w.length > 1);
+  return words.some((w) => local.includes(w));
+}
+
+export function agileContact(detail: AgileDetail): PortalContact {
+  const org = text(detail.agentSurname);
+  const contact = text(detail.agentName) ?? text(detail.agentContactName);
+  const email = text(detail.agentEmail)?.toLowerCase() ?? null;
+  const base = { agentEmail: email, agentPhone: text(detail.agentTelephoneNumber), source: "Council planning register (application details)" };
+
+  if (contact && !readsLikePractice(contact)) {
+    return { ...base, agentName: cleanAgentName(contact), agentFirm: org && org !== contact ? org : null };
+  }
+  if (contact) return { ...base, agentName: null, agentFirm: contact };
+  if (org && !readsLikePractice(org) && emailNamesPerson(email, org)) {
+    return { ...base, agentName: cleanAgentName(org), agentFirm: null };
+  }
+  return { ...base, agentName: null, agentFirm: org };
 }
 
 const UA =
@@ -391,6 +428,17 @@ export async function extractContactFromPortal(
     return mergeContacts(contacts, detailsHtml ? parseIdoxDetails(detailsHtml) : null);
   }
 
+  const agileId = agileIdFromUrl(url);
+  if (agileId !== null) {
+    // An unreachable register says nothing about the agent: treat it as busy so
+    // the lead goes back in the queue rather than being marked not found.
+    const detail = await agileGet<AgileDetail>(`/application/${agileId}`).catch(() => {
+      throw new PortalBusyError(503);
+    });
+    const contact = agileContact(detail);
+    return contact.agentEmail || contact.agentFirm || contact.agentName ? contact : null;
+  }
+
   if (isNorthgateUrl(url)) {
     const html = await fetchHtml(url);
     return html ? parseNorthgate(html) : null;
@@ -422,7 +470,7 @@ export async function extractContactFromPortal(
 
 /** True when this lead sits on a platform we can read directly. */
 export function isSupportedPortal(councilUrl: string | null | undefined): boolean {
-  return !!councilUrl && (isIdoxUrl(councilUrl) || isNorthgateUrl(councilUrl) || isNecswsUrl(councilUrl) || isAstunUrl(councilUrl));
+  return !!councilUrl && (agileIdFromUrl(councilUrl) !== null || isIdoxUrl(councilUrl) || isNorthgateUrl(councilUrl) || isNecswsUrl(councilUrl) || isAstunUrl(councilUrl));
 }
 
 /**

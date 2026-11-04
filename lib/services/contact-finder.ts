@@ -30,7 +30,7 @@ import {
   PortalBusyError,
   type PortalContact,
 } from "@/lib/services/portal-extract";
-import { buyingArea, inCoverage } from "@/lib/coverage";
+import { buyingArea, inCoverage, PRIORITY_COUNCILS, worthWorking } from "@/lib/coverage";
 
 const MODEL = "claude-haiku-4-5-20251001";
 
@@ -713,32 +713,31 @@ export async function bulkFindContacts(options?: {
   // entirely. Refusals and withdrawals stay out.
   const base = {
     ...inCoverage,
-    leadScore: { gte: minScore },
     contactStatus: null,
     publicOwner: false,
-    OR: [{ status: { not: "decided" } }, { decision: { contains: "Approv" } }, { decision: { contains: "Grant" } }],
+    AND: [
+      worthWorking(minScore),
+      { OR: [{ status: { not: "decided" } }, { decision: { contains: "Approv" } }, { decision: { contains: "Grant" } }] },
+    ],
   };
   const order = [{ leadScore: "desc" as const }, { submittedAt: "desc" as const }];
+  const select = { id: true, councilUrl: true, council: true };
 
-  // A council portal link is the finder's strongest signal (it confirms the
-  // application and often names the agent), so spend the budget on those leads
-  // first, then backfill with link-less leads to use any remaining slots.
-  const withUrl = await prisma.planningApplication.findMany({
-    where: { ...base, councilUrl: { not: null } },
-    orderBy: order,
-    take: limit,
-    select: { id: true, councilUrl: true, council: true },
-  });
-  const remaining = limit - withUrl.length;
-  const withoutUrl = remaining > 0
-    ? await prisma.planningApplication.findMany({
-        where: { ...base, councilUrl: null },
-        orderBy: order,
-        take: remaining,
-        select: { id: true, councilUrl: true, council: true },
-      })
-    : [];
-  const candidates = [...withUrl, ...withoutUrl];
+  // The priority boroughs go first: a 5 in Wandsworth is worth more to James than
+  // a 7 in Guildford. Within each group a council portal link is the finder's
+  // strongest signal (it confirms the application and often names the agent),
+  // so leads with one go before link-less leads.
+  const groups = [{ council: { in: PRIORITY_COUNCILS } }, { council: { notIn: PRIORITY_COUNCILS } }];
+  const candidates: Array<{ id: string; councilUrl: string | null; council: string }> = [];
+  for (const group of groups) {
+    for (const link of [{ councilUrl: { not: null } }, { councilUrl: null }]) {
+      const take = limit - candidates.length;
+      if (take <= 0) break;
+      candidates.push(
+        ...(await prisma.planningApplication.findMany({ where: { ...base, ...group, ...link }, orderBy: order, take, select }))
+      );
+    }
+  }
 
   let found = 0;
   let drafted = 0;

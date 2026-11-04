@@ -35,11 +35,16 @@ const BRAND_CONTEXT = `IdealLand sources off-market property opportunities for d
 
 IdealLand specifically targets SMALL residential schemes of 1-9 units. This is deliberate: at 10+ units a scheme triggers affordable-housing obligations (s.106 / borough policy) that developers want to avoid, so sub-threshold 1-9 unit schemes are the most attractive, deliverable deals.
 
+IdealLand's buyers most want sites in Wandsworth (IdealLand's own borough), Merton, Lambeth and Hammersmith & Fulham. Most schemes there are 1-2 homes, and a 1-2 home site in one of those boroughs is a real deal for them.
+
+The score answers one question: how worth a letter to the agent is this site? Score the deal, not the postcode — never mark a site down for being in a "mid-tier", "suburban" or "less prime" part of a covered borough.
+
 Scoring rubric (1-10):
-  9-10 = Prime: 6-9 units, desirable borough, clean new-build or conversion, no obvious constraints
-  6-8  = Strong: 3-5 units, decent location, clear build/conversion angle
-  4-5  = Average: 1-2 units, a less sought-after part of the area, or minor infill
-  1-3  = Marginal: barely qualifies, peripheral, or heavily constrained (e.g. conservation/listed limits)`;
+  9-10 = Prime: 4-9 homes, clean new-build or conversion, no obvious constraints; or 2-3 homes in a priority borough with nothing against it
+  7-8  = Strong: 2-3 homes anywhere with a clear build/conversion angle; or a 1-home new-build / replacement in a priority borough
+  5-6  = Worth a letter: a 1-home scheme, or a site with one real constraint (listed building, tight backland access, part-retrospective)
+  3-4  = Weak: retrospective regularisation of homes already built, a conversion that adds no home, or several real constraints
+  1-2  = Not a deal: HMO / care / student use, council-owned land, or no homes actually created`;
 
 async function analyzeWithClaude(
   council: string,

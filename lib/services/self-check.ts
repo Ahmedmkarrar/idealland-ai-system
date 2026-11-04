@@ -8,7 +8,7 @@
 // so it appears on the Error Log page — staff-only, never in Lucy's digest.
 
 import { prisma } from "@/lib/db/client";
-import { inCoverage } from "@/lib/coverage";
+import { COVERAGE_AREAS, inCoverage } from "@/lib/coverage";
 import { buildApproachEmail, draftApproach, earlierSitesFor, sentSitesByAgent } from "@/lib/services/contact-finder";
 import {
   extractContactFromPortal,
@@ -20,6 +20,10 @@ import { contactSource } from "@/lib/approach-state";
 
 const REGISTER_SAMPLE = Number(process.env.SELF_CHECK_REGISTER_SAMPLE ?? 6);
 const STUCK_RESEARCH_HOURS = 6;
+// A covered council that has stored no new lead in this long has most likely lost
+// its feed. Wandsworth went quiet on 15 Sep 2026 when it changed registers and
+// nobody knew until Lucy asked on 4 Nov.
+const QUIET_FEED_DAYS = Number(process.env.SELF_CHECK_QUIET_FEED_DAYS ?? 14);
 const PLACEHOLDER_TEXT = /\[|\]|undefined|\bnull\b|NaN|\{|\}| 0 residential/;
 const TIME_GREETING = /^\s*Good (morning|afternoon),/i;
 
@@ -115,6 +119,14 @@ export async function runSelfCheck(): Promise<SelfCheckResult> {
   });
   for (const type of new Set(failedRuns.map((r) => r.type))) issues.push(`The ${type} job failed in the last 24 hours`);
 
+  for (const quiet of await quietCouncils()) {
+    issues.push(
+      quiet.newest
+        ? `${quiet.council}: no new lead since ${quiet.newest.toISOString().slice(0, 10)} — check its feed is still running`
+        : `${quiet.council}: no leads stored at all — check its feed`
+    );
+  }
+
   const result: SelfCheckResult = {
     lettersChecked: letters.length,
     rewritten,
@@ -135,4 +147,18 @@ export async function runSelfCheck(): Promise<SelfCheckResult> {
     },
   });
   return result;
+}
+
+/** Covered councils whose newest stored lead is older than QUIET_FEED_DAYS. */
+export async function quietCouncils(): Promise<Array<{ council: string; newest: Date | null }>> {
+  const newest = await prisma.planningApplication.groupBy({
+    by: ["council"],
+    where: inCoverage,
+    _max: { createdAt: true },
+  });
+  const byCouncil = new Map(newest.map((n) => [n.council, n._max.createdAt]));
+  const cutoff = Date.now() - QUIET_FEED_DAYS * 86_400_000;
+  return COVERAGE_AREAS.map((a) => ({ council: a.council, newest: byCouncil.get(a.council) ?? null })).filter(
+    (q) => !q.newest || q.newest.getTime() < cutoff
+  );
 }

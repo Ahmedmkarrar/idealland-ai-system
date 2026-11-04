@@ -20,14 +20,20 @@ export interface CoverageArea {
   region: CoverageRegion;
   /** The authority name PlanIt uses — Surrey districts only, which aren't in the London feed. */
   planitAuthority?: string;
+  /**
+   * A borough Lucy and James most want sites in (Lucy, 4 Nov 2026: "Merton,
+   * Lambeth, Hammersmith and Fulham and Wandsworth, which is our actual
+   * borough"). Its leads are researched first and written to from a lower score.
+   */
+  priority?: boolean;
 }
 
 export const COVERAGE_AREAS: readonly CoverageArea[] = [
   { council: "Kingston", region: "london" },
-  { council: "Merton", region: "london" },
-  { council: "Wandsworth", region: "london" },
-  { council: "Hammersmith & Fulham", region: "london" },
-  { council: "Lambeth", region: "london" },
+  { council: "Merton", region: "london", priority: true },
+  { council: "Wandsworth", region: "london", priority: true },
+  { council: "Hammersmith & Fulham", region: "london", priority: true },
+  { council: "Lambeth", region: "london", priority: true },
   { council: "Lewisham", region: "london" },
   { council: "Elmbridge", region: "surrey", planitAuthority: "Elmbridge" },
   { council: "Epsom & Ewell", region: "surrey", planitAuthority: "Epsom and Ewell" },
@@ -56,6 +62,34 @@ export function coverageArea(council: string): CoverageArea | null {
 
 export function isCoveredCouncil(council: string): boolean {
   return coverageArea(council) !== null;
+}
+
+/** True for the boroughs IdealLand most wants sites in. */
+export function isPriorityCouncil(council: string): boolean {
+  return coverageArea(council)?.priority === true;
+}
+
+export const PRIORITY_COUNCILS: string[] = COVERAGE_AREAS.filter((a) => a.priority).map((a) => a.council);
+
+/**
+ * The lowest AI score worth researching and writing to. The rubric scores a 1-2
+ * home scheme 4-6 wherever it is, and most schemes in the priority boroughs are
+ * 1-2 homes, so a flat 7 left James about eight letters a month from the areas
+ * he cares about most.
+ */
+export const MIN_SCORE_PRIORITY = Number(process.env.PRIORITY_MIN_LEAD_SCORE ?? 5);
+
+/**
+ * Prisma where-fragment: leads at or above `minScore`, or at or above the
+ * priority bar in a priority borough — whichever is lower for that borough.
+ */
+export function worthWorking(minScore: number) {
+  return {
+    OR: [
+      { leadScore: { gte: minScore } },
+      { council: { in: PRIORITY_COUNCILS }, leadScore: { gte: Math.min(minScore, MIN_SCORE_PRIORITY) } },
+    ],
+  };
 }
 
 /** Stored council names, for a Prisma `council: { in: [...] }` filter. */
