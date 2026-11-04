@@ -33,7 +33,8 @@
 // harvesting beyond the leads actually being worked.
 
 import { withRetry } from "@/lib/retry";
-import { agileGet, agileIdFromUrl, text, type AgileDetail } from "@/lib/services/agile-api";
+import { agileGet, agileIdFromUrl, text, wandsworthApplicationForm, type AgileDetail } from "@/lib/services/agile-api";
+import { formAgentFromPdf } from "@/lib/application-form";
 import { NAME_FROM_MAILBOX, nameFromMailbox, tidyName } from "@/lib/agent-name";
 import { usableEmail } from "@/lib/email-address";
 
@@ -441,7 +442,25 @@ export async function extractContactFromPortal(
     const detail = await agileGet<AgileDetail>(`/application/${agileId}`).catch(() => {
       throw new PortalBusyError(503);
     });
-    const contact = agileContact(detail);
+    let contact = agileContact(detail);
+    // The register keeps less than the form: "SH BHATIA" for Mr Ash Bhatia of
+    // Silverline Architects Ltd. Without a clear person, read the form.
+    if (!contact.agentName || contact.source.includes(NAME_FROM_MAILBOX)) {
+      const pdf = await wandsworthApplicationForm(agileId).catch(() => null);
+      const form = pdf ? await formAgentFromPdf(pdf) : null;
+      // Some agents type the practice into the name boxes ("Homz" / "Planning").
+      const formPerson = form?.firstName && form.surname ? `${form.firstName} ${form.surname}` : null;
+      if (formPerson && readsLikePerson(formPerson)) {
+        contact = {
+          ...contact,
+          agentName: tidyName(formPerson),
+          agentFirm: form!.company ? tidyName(form!.company) : contact.agentFirm,
+          source: "Council planning register (application form)",
+        };
+      } else if (form?.company && !contact.agentFirm) {
+        contact = { ...contact, agentFirm: tidyName(form.company) };
+      }
+    }
     return contact.agentEmail || contact.agentFirm || contact.agentName ? contact : null;
   }
 

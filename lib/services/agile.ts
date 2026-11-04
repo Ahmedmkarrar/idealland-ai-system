@@ -17,7 +17,7 @@ import { prisma } from "@/lib/db/client";
 import { coverageArea } from "@/lib/coverage";
 import { publicOwnerReason } from "@/lib/public-ownership";
 import { agileContact } from "@/lib/services/portal-extract";
-import { agileGet, text, wandsworthApplicationUrl, type AgileDetail, type AgileSummary } from "@/lib/services/agile-api";
+import { agileGet, agileIdFromUrl, text, wandsworthApplicationUrl, type AgileDetail, type AgileSummary } from "@/lib/services/agile-api";
 import { looksLikeSchemeText, readNewHomes } from "@/lib/services/planit";
 
 const MIN_UNITS = Number(process.env.PLANNING_MIN_UNITS ?? 1);
@@ -47,13 +47,42 @@ async function validatedSince(days: number): Promise<AgileSummary[]> {
   return out;
 }
 
-function decisionOf(summary: AgileSummary): { status: string; decision: string | null } {
+function decisionOf(summary: Pick<AgileSummary, "decisionText" | "decisionDate">): { status: string; decision: string | null } {
   const d = text(summary.decisionText);
   if (!summary.decisionDate || !d) return { status: "submitted", decision: null };
   if (/refus/i.test(d)) return { status: "decided", decision: "Refused" };
   if (/withdraw/i.test(d)) return { status: "decided", decision: "Withdrawn" };
   if (/approv|grant|permit/i.test(d)) return { status: "decided", decision: "Approved" };
   return { status: "decided", decision: d };
+}
+
+/**
+ * Re-read every live Wandsworth lead's decision. The scan only sees applications
+ * validated in its window, and the DataHub stopped carrying Wandsworth, so older
+ * leads never heard about a decision: 39 West Hill (2026/3176) was withdrawn on
+ * 21 Oct and its letter was still on Ready to Send on 4 Nov.
+ */
+async function refreshDecisions(): Promise<number> {
+  const live = await prisma.planningApplication.findMany({
+    where: { council: "Wandsworth", status: { not: "decided" }, councilUrl: { contains: "planning.wandsworth.gov.uk/wandsworth" } },
+    select: { id: true, councilUrl: true },
+  });
+  let decided = 0;
+  for (const lead of live) {
+    const id = agileIdFromUrl(lead.councilUrl!);
+    if (id === null) continue;
+    const detail = await agileGet<AgileDetail>(`/application/${id}`).catch(() => null);
+    await sleep(REQUEST_GAP_MS);
+    if (!detail) continue;
+    const next = decisionOf({ decisionText: detail.decisionText ?? null, decisionDate: detail.decisionDate ?? null });
+    if (next.status !== "decided") continue;
+    await prisma.planningApplication.update({
+      where: { id: lead.id },
+      data: { ...next, decidedAt: detail.decisionDate ? new Date(detail.decisionDate) : new Date() },
+    });
+    decided++;
+  }
+  return decided;
 }
 
 async function hasRecentScan(): Promise<boolean> {
@@ -152,6 +181,8 @@ export async function scanWandsworth(opts?: { windowDays?: number; force?: boole
       });
       found++;
     }
+
+    updated += await refreshDecisions();
 
     await prisma.automationRun.update({
       where: { id: run.id },

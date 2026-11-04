@@ -26,6 +26,8 @@ export interface AgileSummary {
 }
 
 export interface AgileDetail {
+  decisionText?: string | null;
+  decisionDate?: string | null;
   fullProposal?: string | null;
   applicantSurname?: string | null;
   agentName?: string | null;
@@ -67,4 +69,23 @@ export async function findWandsworthByReference(reference: string): Promise<Agil
   );
   if (Array.isArray(page)) return null;
   return page.results?.find((r) => r.reference === reference) ?? null;
+}
+
+interface AgileDocument {
+  documentHash: string;
+  mediaDescription: string | null;
+}
+
+/** The submitted application form for an application, as a PDF, or null. */
+export async function wandsworthApplicationForm(id: number): Promise<ArrayBuffer | null> {
+  const docs = await agileGet<AgileDocument[]>(`/application/${id}/document`).catch(() => [] as AgileDocument[]);
+  const form = Array.isArray(docs) ? docs.find((d) => /application form/i.test(d.mediaDescription ?? "")) : undefined;
+  if (!form) return null;
+  const res = await fetch(`${API_URL}/application/document/WANDSWORTH/${form.documentHash}`, {
+    headers: HEADERS,
+    cache: "no-store",
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!res.ok || !(res.headers.get("content-type") ?? "").includes("pdf")) return null;
+  return res.arrayBuffer();
 }

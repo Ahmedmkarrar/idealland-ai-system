@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import { COVERAGE_AREAS, inCoverage } from "@/lib/coverage";
 
+// A refused or withdrawn scheme's letter isn't shown on Ready, so isn't counted.
+// Spelled out with OR: a bare NOT drops every lead whose decision is NULL.
+const LIVE_SCHEME = {
+  OR: [{ decision: null }, { AND: [{ NOT: { decision: { contains: "Refus" } } }, { NOT: { decision: { contains: "Withdraw" } } }] }],
+};
+
 export async function GET() {
   const [
     totalApplications,
@@ -37,7 +43,7 @@ export async function GET() {
     // A lead is "ready" once it has a named contact and a written approach email
     // and nobody has sent it yet — this is the queue on the /ready page.
     prisma.planningApplication.count({
-      where: { ...inCoverage, contactStatus: "found", approachBody: { not: null }, approachStatus: { notIn: ["sent", "discarded", "pending"] } },
+      where: { ...inCoverage, contactStatus: "found", approachBody: { not: null }, approachStatus: { notIn: ["sent", "discarded", "pending"] }, ...LIVE_SCHEME },
     }),
     prisma.planningApplication.count({ where: { approachStatus: "sent" } }),
   ]);
@@ -49,7 +55,7 @@ export async function GET() {
     prisma.planningApplication.groupBy({ by: ["council"], where: { ...inCoverage, createdAt: { gte: monthAgo } }, _count: true }),
     prisma.planningApplication.groupBy({
       by: ["council"],
-      where: { ...inCoverage, contactStatus: "found", approachBody: { not: null }, approachStatus: { notIn: ["sent", "discarded", "pending"] } },
+      where: { ...inCoverage, contactStatus: "found", approachBody: { not: null }, approachStatus: { notIn: ["sent", "discarded", "pending"] }, ...LIVE_SCHEME },
       _count: true,
     }),
   ]);

@@ -197,7 +197,11 @@ export default function ReadyToSendPage() {
 
   // Outside Lucy's areas nothing is left to send — those letters live on the Sent page.
   // Council-owned land can't be brokered, so it never reaches the to-send list.
+  // A refused or withdrawn application has no scheme to ask about (39 West Hill,
+  // withdrawn 21 Oct, was still listed on 4 Nov). Research already skips these.
+  const isDeadScheme = (l: ReadyLead) => l.status === "decided" && /refus|withdraw/i.test(l.decision ?? "");
   const isToSend = (l: ReadyLead) =>
+    !isDeadScheme(l) &&
     l.approachStatus !== "sent" &&
     l.approachStatus !== "discarded" &&
     l.approachStatus !== "pending" &&
