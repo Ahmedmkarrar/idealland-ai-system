@@ -17,10 +17,10 @@
 // not a guaranteed auto-contact. The UI hands staff LinkedIn/Google/council links
 // to finish the last mile.
 import Anthropic from "@anthropic-ai/sdk";
-import { resolve4, resolveMx } from "node:dns/promises";
 import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
 import { usableEmail } from "@/lib/email-address";
+import { domainTakesMail } from "@/lib/email-domain";
 import { ENTERED_BY_LUCY } from "@/lib/approach-state";
 import { findEmailOnWebsite, guessWebsites } from "@/lib/services/website-email";
 import { councilReference } from "@/lib/planning-portals";
@@ -152,23 +152,6 @@ export async function emailFromPracticeWebsite(
     if (hit) return { email: hit.email, website: site, note: `Email from the practice's website (${hit.page})` };
   }
   return null;
-}
-
-/** True when the email's domain has a mail server (or, failing that, an address). Unknown on a DNS error. */
-async function domainTakesMail(email: string): Promise<boolean> {
-  const domain = email.split("@")[1]?.toLowerCase();
-  if (!domain) return false;
-  const missing = (e: unknown) => ["ENOTFOUND", "ENODATA"].includes((e as NodeJS.ErrnoException).code ?? "");
-  try {
-    if ((await resolveMx(domain)).length > 0) return true;
-  } catch (e) {
-    if (!missing(e)) return true;
-  }
-  try {
-    return (await resolve4(domain)).length > 0;
-  } catch (e) {
-    return !missing(e);
-  }
 }
 
 export async function findAgentContact(

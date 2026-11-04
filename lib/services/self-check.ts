@@ -18,6 +18,7 @@ import {
 } from "@/lib/services/portal-extract";
 import { contactSource } from "@/lib/approach-state";
 import { NAME_FROM_MAILBOX } from "@/lib/agent-name";
+import { domainTakesMail } from "@/lib/email-domain";
 
 const REGISTER_SAMPLE = Number(process.env.SELF_CHECK_REGISTER_SAMPLE ?? 6);
 const STUCK_RESEARCH_HOURS = 6;
@@ -69,6 +70,9 @@ export async function runSelfCheck(): Promise<SelfCheckResult> {
     // A name read from the agent's own mailbox (lib/agent-name.ts) is theirs.
     if (/^Dear /.test(expected.body) && contactSource(lead.contactNotes) === "web" && !lead.contactNotes?.includes(NAME_FROM_MAILBOX)) {
       issues.push(`${ref}: letter greets ${lead.agentName} but the name came from web search`);
+    }
+    if (lead.agentEmail && !(await domainTakesMail(lead.agentEmail))) {
+      issues.push(`${ref}: letter is to ${lead.agentEmail}, but that domain can't receive email (a typo, or an invented address)`);
     }
     if (lead.contactStatus !== "found") {
       issues.push(`${ref}: letter waiting to send but the contact is "${lead.contactStatus ?? "unresearched"}"`);
