@@ -17,6 +17,7 @@
 // not a guaranteed auto-contact. The UI hands staff LinkedIn/Google/council links
 // to finish the last mile.
 import Anthropic from "@anthropic-ai/sdk";
+import { resolve4, resolveMx } from "node:dns/promises";
 import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
 import { usableEmail } from "@/lib/email-address";
@@ -151,6 +152,23 @@ export async function emailFromPracticeWebsite(
     if (hit) return { email: hit.email, website: site, note: `Email from the practice's website (${hit.page})` };
   }
   return null;
+}
+
+/** True when the email's domain has a mail server (or, failing that, an address). Unknown on a DNS error. */
+async function domainTakesMail(email: string): Promise<boolean> {
+  const domain = email.split("@")[1]?.toLowerCase();
+  if (!domain) return false;
+  const missing = (e: unknown) => ["ENOTFOUND", "ENODATA"].includes((e as NodeJS.ErrnoException).code ?? "");
+  try {
+    if ((await resolveMx(domain)).length > 0) return true;
+  } catch (e) {
+    if (!missing(e)) return true;
+  }
+  try {
+    return (await resolve4(domain)).length > 0;
+  } catch (e) {
+    return !missing(e);
+  }
 }
 
 export async function findAgentContact(
@@ -307,7 +325,13 @@ Return ONLY a JSON object, no prose:
     typeof v === "string" && v.trim() && v.trim().toLowerCase() !== "null" ? v.trim() : null;
 
   const rawEmail = clean(parsed.agentEmail);
-  const { email: agentEmail, rejected: rejectedEmail } = usableEmail(rawEmail);
+  const usable = usableEmail(rawEmail);
+  // Web research can return an address at a domain that doesn't exist: it gave
+  // info@smithplanning.co.uk (no mail server, no website) for two Surrey schemes
+  // on 4 Nov 2026. A letter there bounces, so the address must be able to take mail.
+  const deadDomain = usable.email && !(await domainTakesMail(usable.email)) ? usable.email : null;
+  const agentEmail = deadDomain ? null : usable.email;
+  const rejectedEmail = usable.rejected ?? deadDomain;
 
   // Only the register says who the agent is. Web search finds the people who run
   // a firm, not who filed the application: it put "Dear Joshua" (Tailored Living's
@@ -333,7 +357,9 @@ Return ONLY a JSON object, no prose:
   if (rejectedEmail) {
     result.notes = [
       result.notes,
-      `Unverified email pattern returned ("${rejectedEmail}") — not a confirmed address. Identify the individual before sending.`,
+      deadDomain
+        ? `Web research gave "${deadDomain}", but that domain can't receive email — not used.`
+        : `Unverified email pattern returned ("${rejectedEmail}") — not a confirmed address. Identify the individual before sending.`,
     ]
       .filter(Boolean)
       .join(" ");
