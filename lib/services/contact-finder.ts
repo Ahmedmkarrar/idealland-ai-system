@@ -31,6 +31,7 @@ import {
   type PortalContact,
 } from "@/lib/services/portal-extract";
 import { buyingArea, inCoverage, PRIORITY_COUNCILS, worthWorking } from "@/lib/coverage";
+import { NAME_FROM_MAILBOX, nameFromMailbox } from "@/lib/agent-name";
 
 const MODEL = "claude-haiku-4-5-20251001";
 
@@ -103,6 +104,18 @@ function withKnownDetails(fromPortal: PortalContact | null, app: ContactDetails)
 }
 
 async function saveContact(applicationId: string, result: ContactResult): Promise<void> {
+  // A firm and an email but no person: the mailbox often names them (Lucy, 4 Nov
+  // 2026: letters "missing the agent's name"). See lib/agent-name.ts for when.
+  if (!result.agentName && result.agentEmail) {
+    const fromRegister = (result.notes ?? "").includes("Council planning register");
+    const name = nameFromMailbox(result.agentEmail, result.agentFirm, fromRegister);
+    if (name) {
+      result = { ...result, agentName: name };
+      if (!(result.notes ?? "").includes(NAME_FROM_MAILBOX)) {
+        result.notes = [result.notes, NAME_FROM_MAILBOX].filter(Boolean).join(" — ");
+      }
+    }
+  }
   await prisma.planningApplication.update({
     where: { id: applicationId },
     data: {

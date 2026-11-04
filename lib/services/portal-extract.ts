@@ -34,6 +34,7 @@
 
 import { withRetry } from "@/lib/retry";
 import { agileGet, agileIdFromUrl, text, type AgileDetail } from "@/lib/services/agile-api";
+import { NAME_FROM_MAILBOX, nameFromMailbox, tidyName } from "@/lib/agent-name";
 import { usableEmail } from "@/lib/email-address";
 
 export interface PortalContact {
@@ -49,20 +50,20 @@ export interface PortalContact {
 // Wandsworth's register on 4 Nov 2026:
 //   agentSurname "Rackham Planning Ltd", agentName "Mrs Kathryn Wrigley" — firm + person
 //   agentSurname "ROK", agentName "ROK Planning"                          — firm only
-//   agentSurname "Ruth Harding", agentName "", email ruth@…               — person only
-// A letter opens "Dear <name>", so a value only counts as a person when it
-// doesn't read like a practice and, standing alone, the email confirms it.
+//   agentSurname "Ruth Harding" / "MR CHARLES PARK", agentName ""         — person only
+// The register is the authority on who filed it, so a value that reads as a
+// person is used as one. Initials ("SH BHATIA") are not a name to greet.
 const PRACTICE_WORDS =
-  /\b(planning|planners?|architects?|architecture|architectural|design|designs|ltd|limited|llp|plc|associates|studio|consult\w*|partners(hip)?|group|surveyors?|homes|developments?|properties|estates?|services|uk|co)\b/i;
+  /\b(planning|planners?|architects?|architecture|architectural|design|designs|ltd|limited|llp|plc|associates|studio|consult\w*|partners(hip)?|group|surveyors?|homes|developments?|properties|estates?|services|projects?|uk|co)\b/i;
+const TITLED = /^(mr|mrs|ms|miss|mx|dr)\.?\s+\S/i;
 
-function readsLikePractice(value: string): boolean {
-  return PRACTICE_WORDS.test(value) || !/\s/.test(value.trim()) || value === value.toUpperCase();
-}
-
-function emailNamesPerson(email: string | null, person: string): boolean {
-  const local = email?.split("@")[0]?.toLowerCase() ?? "";
-  const words = person.toLowerCase().replace(/^(mr|mrs|ms|miss|dr)\.?\s+/, "").split(/\s+/).filter((w) => w.length > 1);
-  return words.some((w) => local.includes(w));
+function readsLikePerson(value: string): boolean {
+  if (PRACTICE_WORDS.test(value)) return false;
+  if (TITLED.test(value)) return true;
+  const words = value.trim().split(/\s+/);
+  if (words.length < 2 || words.length > 3) return false;
+  // "SH BHATIA": two capital letters up front are initials, not a first name.
+  return !/^[A-Z]{1,2}$/.test(words[0]);
 }
 
 export function agileContact(detail: AgileDetail): PortalContact {
@@ -70,15 +71,20 @@ export function agileContact(detail: AgileDetail): PortalContact {
   const contact = text(detail.agentName) ?? text(detail.agentContactName);
   const email = text(detail.agentEmail)?.toLowerCase() ?? null;
   const base = { agentEmail: email, agentPhone: text(detail.agentTelephoneNumber), source: "Council planning register (application details)" };
+  const person = (v: string) => { const n = cleanAgentName(v); return n ? tidyName(n) : null; };
 
-  if (contact && !readsLikePractice(contact)) {
-    return { ...base, agentName: cleanAgentName(contact), agentFirm: org && org !== contact ? org : null };
+  if (contact && readsLikePerson(contact)) {
+    return { ...base, agentName: person(contact), agentFirm: org && org !== contact && !readsLikePerson(org) ? org : null };
   }
-  if (contact) return { ...base, agentName: null, agentFirm: contact };
-  if (org && !readsLikePractice(org) && emailNamesPerson(email, org)) {
-    return { ...base, agentName: cleanAgentName(org), agentFirm: null };
-  }
-  return { ...base, agentName: null, agentFirm: org };
+  const firm = contact ?? org;
+  if (!contact && org && readsLikePerson(org)) return { ...base, agentName: person(org), agentFirm: null };
+  const fromMailbox = nameFromMailbox(email, firm, true);
+  return {
+    ...base,
+    agentName: fromMailbox,
+    agentFirm: firm,
+    source: fromMailbox ? `${base.source} — ${NAME_FROM_MAILBOX}` : base.source,
+  };
 }
 
 const UA =
