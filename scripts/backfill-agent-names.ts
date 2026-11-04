@@ -34,7 +34,9 @@ async function main(): Promise<void> {
       const fresh = await extractContactFromPortal(lead.councilUrl).catch(() => null);
       if (fresh?.agentName) {
         name = fresh.agentName;
-        firm = fresh.agentFirm ?? firm;
+        // The register's own read wins, firm included — the old parse stored some
+        // people ("Shloime Godlewsky") as the firm, which blocks the greeting.
+        firm = fresh.agentFirm;
         notes = fresh.source;
       }
     }
