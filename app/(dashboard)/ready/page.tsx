@@ -14,12 +14,12 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   RefreshCw, Search, MapPin, Mail, Copy, Check,
-  AlertTriangle, Send, Inbox, CheckCheck, Undo2, Trash2, Hourglass,
+  AlertTriangle, Send, Inbox, CheckCheck, Undo2, Trash2, Hourglass, UserSearch,
 } from "lucide-react";
 import { isUsableEmail } from "@/lib/email-address";
 import { planningApplicationLink, councilReference, mapUrl } from "@/lib/planning-portals";
 import { addressLooksIncomplete, approachMailto, groupByAgent, sameAgentIn, refreshGreeting, withPersonalLine } from "@/lib/approach-email";
-import { coverageArea, isCoveredCouncil, type CoverageRegion } from "@/lib/coverage";
+import { coverageArea, isCoveredCouncil, isPriorityCouncil, MIN_SCORE_PRIORITY, type CoverageRegion } from "@/lib/coverage";
 import { cameBack, contactSource, formatSentDate, updateApproach, type ApproachChange } from "@/lib/approach-state";
 import { EditContact, LeadNote, ReportProblem } from "@/components/lead-notes";
 import { freshLabel, freshPermissionAge } from "@/lib/fresh-permission";
@@ -61,6 +61,27 @@ function scoreBadgeClass(score: number | null): string {
   return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
+// Research writes to leads from score 7, or from 5 in the priority boroughs.
+const MIN_SCORE_WORTH_A_LETTER = 7;
+
+/**
+ * A site worth a letter where research couldn't name the agent. These never get a
+ * letter, so before 4 Nov they never appeared here at all — Lucy saw an 8 in
+ * Hammersmith (81 Blythe Road) on Sourcing and couldn't tell why it was missing.
+ */
+function needsAnAgent(lead: ReadyLead): boolean {
+  const live = lead.status !== "decided" || /approv|grant/i.test(lead.decision ?? "");
+  const bar = isPriorityCouncil(lead.council) ? MIN_SCORE_PRIORITY : MIN_SCORE_WORTH_A_LETTER;
+  return (
+    lead.contactStatus === "not_found" &&
+    live &&
+    !lead.publicOwner &&
+    isCoveredCouncil(lead.council) &&
+    (lead.leadScore ?? 0) >= bar &&
+    !["sent", "discarded", "pending"].includes(lead.approachStatus ?? "")
+  );
+}
+
 function sentLettersByAgent(applications: ReadyLead[]): Map<string, ReadyLead[]> {
   return groupByAgent(applications.filter((a) => a.approachStatus === "sent"));
 }
@@ -90,6 +111,8 @@ export default function ReadyToSendPage() {
   const [showDiscarded, setShowDiscarded] = useState(false);
   // Lucy's own sentence for a letter, typed just before she sends it.
   const [personalLines, setPersonalLines] = useState<Record<string, string>>({});
+  const [agentless, setAgentless] = useState<ReadyLead[]>([]);
+  const [retrying, setRetrying] = useState<Record<string, "busy" | "failed">>({});
 
   const fetchLeads = useCallback(async () => {
     const response = await fetch("/api/sourcing");
@@ -107,6 +130,15 @@ export default function ReadyToSendPage() {
         })
     );
     setSentByAgent(sentLettersByAgent(applications));
+    setAgentless(
+      applications
+        .filter(needsAnAgent)
+        .sort(
+          (a, b) =>
+            Number(isPriorityCouncil(b.council)) - Number(isPriorityCouncil(a.council)) ||
+            (b.leadScore ?? 0) - (a.leadScore ?? 0)
+        )
+    );
     setIsLoading(false);
   }, []);
 
@@ -122,6 +154,26 @@ export default function ReadyToSendPage() {
         : null
     );
     await fetchLeads();
+  };
+
+  const retryResearch = async (lead: ReadyLead) => {
+    setRetrying((r) => ({ ...r, [lead.id]: "busy" }));
+    const res = await fetch("/api/sourcing/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ applicationId: lead.id, force: true, autoDraft: true }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data?.result?.found) {
+      setRetrying((r) => {
+        const next = { ...r };
+        delete next[lead.id];
+        return next;
+      });
+      await fetchLeads();
+      return;
+    }
+    setRetrying((r) => ({ ...r, [lead.id]: "failed" }));
   };
 
   const letterBody = (lead: ReadyLead) =>
@@ -375,7 +427,7 @@ export default function ReadyToSendPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: "Ready to email", value: readyToEmail.length, color: "text-emerald-600" },
-          { label: "Need an address", value: needsLookup.length, color: "text-amber-600" },
+          { label: "Need an address", value: needsLookup.length + agentless.length, color: "text-amber-600" },
           { label: "Sent", value: sentCount, color: "text-blue-600" },
           {
             label: "Came back",
@@ -628,6 +680,66 @@ export default function ReadyToSendPage() {
           )}
 
         </div>
+      )}
+
+      {/* Good sites research couldn't name the agent for — found by phone, WhatsApp or the case officer. */}
+      {!isLoading && agentless.filter(matchesSearch).filter(matchesArea).length > 0 && (
+        <section className="space-y-3 max-w-4xl">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+            <UserSearch className="w-3.5 h-3.5" />
+            Good sites, agent not found yet ({agentless.filter(matchesSearch).filter(matchesArea).length})
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            We couldn&rsquo;t find who filed these. If you or James can find out — the council page, the case
+            officer, or someone you know — press <strong>Edit contact</strong> and type them in: the letter is
+            written straight away and the site moves up to Ready to Send. Merton, Lambeth, Hammersmith &amp;
+            Fulham and Wandsworth come first.
+          </p>
+          {agentless
+            .filter(matchesSearch)
+            .filter(matchesArea)
+            .map((lead) => (
+              <Card key={lead.id} className={isPriorityCouncil(lead.council) ? "border-amber-200" : undefined}>
+                <CardContent className="pt-4 pb-4 space-y-3">
+                  {renderSiteHeader(lead)}
+                  <div className="border-t pt-3 space-y-2">
+                    {lead.contactNotes && (
+                      <p className="text-xs text-muted-foreground">
+                        <span className="font-medium">What we found:</span> {lead.contactNotes}
+                      </p>
+                    )}
+                    {renderLookupLinks(lead)}
+                    {renderLucyTools(lead)}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={retrying[lead.id] === "busy"}
+                        onClick={() => retryResearch(lead)}
+                        title="Searches the council register and the web for the agent again"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${retrying[lead.id] === "busy" ? "animate-spin" : ""}`} />
+                        {retrying[lead.id] === "busy" ? "Searching…" : "Try again"}
+                      </Button>
+                      {retrying[lead.id] === "failed" && (
+                        <span className="text-xs text-muted-foreground">Still nothing — the links above are the next best bet.</span>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-muted-foreground"
+                        onClick={() => handleApproachState(lead, { status: "discarded" })}
+                        title="Not worth chasing — takes it off this list"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                        Not worth it
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+        </section>
       )}
 
       {/* Letters on hold while the agent is reached another way. Always open — they're still live. */}

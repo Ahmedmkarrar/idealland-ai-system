@@ -331,8 +331,23 @@ export async function scanSurrey(opts?: { windowDays?: number; force?: boolean }
     }
 
     // New ones: shortlist on the description, then read the home count.
+    // A council's own register (Elmbridge, lib/services/ishare.ts) may already
+    // have stored the application under the council's reference.
+    const storedByCouncilRef = new Set(
+      (
+        await prisma.planningApplication.findMany({
+          where: { lpaReference: { in: [...unique.values()].map((c) => c.record.uid) } },
+          select: { council: true, lpaReference: true },
+        })
+      ).map((e) => `${e.council}|${e.lpaReference}`)
+    );
     const fresh = [...unique.entries()]
-      .filter(([reference, c]) => !existingByRef.has(reference) && looksLikeScheme(c.record))
+      .filter(
+        ([reference, c]) =>
+          !existingByRef.has(reference) &&
+          !storedByCouncilRef.has(`${c.area.council}|${c.record.uid}`) &&
+          looksLikeScheme(c.record)
+      )
       .map(([, c]) => c);
 
     const counts: Array<number | null> = [];

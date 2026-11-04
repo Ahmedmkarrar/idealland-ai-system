@@ -890,8 +890,10 @@ export async function updateLeadDetails(
   }
 
   await prisma.planningApplication.update({ where: { id: applicationId }, data });
-  if (contactChanged && app.approachBody && app.approachStatus !== "sent") {
-    await draftApproach(applicationId, { force: true });
+  // Also when there was no letter yet: a lead research gave up on ("Needs an
+  // agent" on Ready) gets its first letter the moment Lucy types the agent in.
+  if (contactChanged && data.contactStatus === "found" && app.approachStatus !== "sent") {
+    await draftApproach(applicationId, { force: Boolean(app.approachBody) });
   }
   return { ok: true };
 }

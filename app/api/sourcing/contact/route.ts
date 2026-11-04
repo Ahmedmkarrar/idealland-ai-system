@@ -1,6 +1,6 @@
 // Agent contact discovery for a planning application (or the top undone leads).
 import { NextRequest, NextResponse } from "next/server";
-import { findAgentContact, bulkFindContacts } from "@/lib/services/contact-finder";
+import { findAgentContact, bulkFindContacts, draftApproach } from "@/lib/services/contact-finder";
 import { applyRateLimit } from "@/lib/rate-limit";
 
 interface Body {
@@ -32,5 +32,7 @@ export async function POST(request: NextRequest) {
   }
 
   const result = await findAgentContact(body.applicationId, { force: body.force });
+  // "Try again" on Ready's Needs-an-agent list: a found agent gets a letter straight away.
+  if (body.autoDraft && result.ok && result.result?.found) await draftApproach(body.applicationId);
   return NextResponse.json(result, { status: result.ok ? 200 : 400 });
 }

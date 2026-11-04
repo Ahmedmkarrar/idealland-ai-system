@@ -31,7 +31,24 @@ interface ConfigStatus {
   xero: boolean;
 }
 
+interface AreaHealth {
+  council: string;
+  region: "london" | "surrey";
+  priority: boolean;
+  newestLeadAt: string | null;
+  leadsLast30Days: number;
+  readyToSend: number;
+}
+
+// The morning self-check raises the same alarm at 14 days.
+const QUIET_AFTER_DAYS = 14;
+
+function daysSince(value: string | null): number | null {
+  return value ? Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000) : null;
+}
+
 interface Stats {
+  coverage: AreaHealth[];
   sourcing: { totalApplications: number; approvedApplications: number; pendingApplications: number; primeLeads: number };
   outreach: { readyToSend: number; approachesSent: number };
   documents: { totalDocuments: number; retrievedDocuments: number; pendingDocuments: number };
@@ -98,6 +115,10 @@ const RUN_TYPE_LABELS: Record<string, string> = {
   outreach: "Drafted approach emails",
   "decisions-backfill": "Backfilled past decisions",
   "hmo-ingest": "Updated the HMO register",
+  "sourcing-surrey": "Looked for new Surrey sites",
+  "sourcing-wandsworth": "Read Wandsworth's planning register",
+  "sourcing-elmbridge": "Read Elmbridge's planning register",
+  "self-check": "Morning self-check",
   invoicing: "Generated invoices",
   ads: "Updated ad campaigns",
 };
@@ -384,6 +405,45 @@ export default function OverviewPage() {
           </Card>
         ))}
       </div>
+
+      {stats.coverage?.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Your areas</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              New sites found in each area in the last 30 days, and letters waiting on Ready to Send. Starred areas
+              are researched first. An area marked <span className="text-red-600 font-medium">quiet</span> has had
+              nothing new for {QUIET_AFTER_DAYS} days — usually its council&rsquo;s feed has stopped, and we look into it.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+              {[...stats.coverage]
+                .sort((a, b) => Number(b.priority) - Number(a.priority) || a.region.localeCompare(b.region))
+                .map((area) => {
+                  const age = daysSince(area.newestLeadAt);
+                  const quiet = age === null || age >= QUIET_AFTER_DAYS;
+                  return (
+                    <div
+                      key={area.council}
+                      className={`rounded-lg border p-3 ${quiet ? "border-red-200 bg-red-50" : area.priority ? "border-amber-200 bg-amber-50/50" : ""}`}
+                    >
+                      <p className="text-sm font-medium truncate" title={area.council}>
+                        {area.priority && <span className="text-amber-500 mr-1">★</span>}
+                        {area.council}
+                      </p>
+                      <p className="text-2xl font-bold mt-1">{area.leadsLast30Days}</p>
+                      <p className="text-xs text-muted-foreground">new sites · {area.readyToSend} to send</p>
+                      <p className={`text-xs mt-1 ${quiet ? "text-red-600 font-medium" : "text-muted-foreground"}`}>
+                        {age === null ? "quiet — nothing yet" : age === 0 ? "newest today" : `${quiet ? "quiet — " : ""}newest ${age}d ago`}
+                      </p>
+                    </div>
+                  );
+                })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
