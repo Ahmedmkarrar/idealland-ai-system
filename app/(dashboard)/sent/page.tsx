@@ -20,6 +20,7 @@ import {
   type ApproachChange,
 } from "@/lib/approach-state";
 import { EditContact, LeadNote, ReportProblem } from "@/components/lead-notes";
+import { ChaseList, type ChaseUp } from "@/components/chase-list";
 
 interface SentLead {
   id: string;
@@ -40,15 +41,17 @@ interface SentLead {
   approachOutcome: string | null;
   staffNote: string | null;
   followUpAt: string | null;
+  chasedAt: string | null;
 }
 
-type View = "all" | "waiting" | "came_back" | "follow_up";
+type View = "all" | "waiting" | "came_back" | "follow_up" | "chase";
 
 const VIEWS: ReadonlyArray<{ value: View; label: string }> = [
   { value: "all", label: "All" },
   { value: "waiting", label: "Waiting to hear" },
   { value: "came_back", label: "Came back to us" },
   { value: "follow_up", label: "Follow-ups due" },
+  { value: "chase", label: "Chase-ups due" },
 ];
 
 function inView(lead: SentLead, view: View): boolean {
@@ -65,8 +68,11 @@ export default function SentPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
 
+  const [chases, setChases] = useState<ChaseUp[]>([]);
+
   const fetchLeads = useCallback(async () => {
-    const response = await fetch("/api/sourcing");
+    const [response, chaseResponse] = await Promise.all([fetch("/api/sourcing"), fetch("/api/sourcing/chases")]);
+    if (chaseResponse.ok) setChases((await chaseResponse.json()).chases ?? []);
     const data = await response.json();
     const applications: SentLead[] = data.applications ?? [];
     setLeads(
@@ -145,6 +151,9 @@ export default function SentPage() {
               {v.value === "follow_up" && dueCount > 0 && (
                 <span className="ml-1.5 rounded-full bg-red-100 text-red-700 px-1.5 text-xs font-semibold">{dueCount}</span>
               )}
+              {v.value === "chase" && chases.length > 0 && (
+                <span className="ml-1.5 rounded-full bg-amber-100 text-amber-800 px-1.5 text-xs font-semibold">{chases.length}</span>
+              )}
             </button>
           ))}
         </div>
@@ -159,7 +168,9 @@ export default function SentPage() {
         </div>
       </div>
 
-      {isLoading ? (
+      {view === "chase" && !isLoading ? (
+        <ChaseList chases={chases} onChanged={fetchLeads} />
+      ) : isLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="h-28 bg-muted rounded animate-pulse" />
@@ -200,8 +211,9 @@ export default function SentPage() {
                         <span className="font-mono">{councilReference(lead) ?? lead.reference}</span>
                       </p>
                     </div>
-                    <p className="text-xs text-muted-foreground whitespace-nowrap">
+                    <p className="text-xs text-muted-foreground whitespace-nowrap text-right">
                       Sent {formatSentDate(lead.approachSentAt)}
+                      {lead.chasedAt && <span className="block">Chased {formatSentDate(lead.chasedAt)}</span>}
                     </p>
                   </div>
 

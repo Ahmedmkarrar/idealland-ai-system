@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db/client";
 import { withRetry } from "@/lib/retry";
 import { inCoverage } from "@/lib/coverage";
 import { FRESH_PERMISSION_DAYS, freshLabel, freshPermissionAge } from "@/lib/fresh-permission";
+import { CHASE_AFTER_DAYS, chaseUpsDue } from "@/lib/services/chase";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -121,6 +122,16 @@ export async function sendDailyDigest(): Promise<{ sent: boolean; count: number;
        </div>`
     : "";
 
+  // Agents who haven't answered a letter in two weeks, with a follow-up written.
+  const chases = await chaseUpsDue().catch(() => []);
+  const chaseSection = chases.length
+    ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 18px;margin-bottom:20px">
+         <p style="margin:0;font-size:14px;color:#92400e">
+           <strong>${chases.length} agent${chases.length > 1 ? "s" : ""}</strong> haven't replied in ${CHASE_AFTER_DAYS} days or more. A short follow-up is written for each: Sent page → <strong>Chase-ups due</strong>.
+         </p>
+       </div>`
+    : "";
+
   // Highest-scoring leads first; unscored apps sink to the bottom.
   const ranked = [...apps].sort((a, b) => (b.leadScore ?? 0) - (a.leadScore ?? 0));
   const count = ranked.length;
@@ -154,7 +165,7 @@ export async function sendDailyDigest(): Promise<{ sent: boolean; count: number;
     })
     .join("");
 
-  const body = freshSection + (count > 0
+  const body = freshSection + chaseSection + (count > 0
     ? `<p style="color:#334155;font-size:15px">
          Overnight the system surfaced <strong>${count}</strong> new live opportunit${count > 1 ? "ies" : "y"}, ranked by lead score:
        </p>${cards}`

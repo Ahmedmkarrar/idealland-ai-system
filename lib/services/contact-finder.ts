@@ -391,7 +391,7 @@ function properCase(word: string): string {
   return word === word.toUpperCase() ? word.charAt(0) + word.slice(1).toLowerCase() : word;
 }
 
-function greeting(agentName: string | null, agentFirm: string | null): string {
+export function greeting(agentName: string | null, agentFirm: string | null): string {
   if (!agentName || /[/,&]/.test(agentName)) return timeGreeting();
   const words = agentName.trim().split(/\s+/);
   // "Mr Patel" on the register: "Dear Mr Patel,", never "Dear Mr,".
@@ -515,7 +515,7 @@ function monthYear(date: Date | string | null | undefined): string | null {
  * Lucy's wording (7 Oct 2026). She sends the letter herself and books the call,
  * with James on it, so it offers to arrange one rather than printing a number.
  */
-function chatOffer(): string {
+export function chatOffer(): string {
   return "If you would prefer to have a chat please let me know and I will set up a call with my managing director, James.";
 }
 
@@ -537,7 +537,7 @@ function earlierSitesPhrase(addresses: string[]): string {
  * anything that isn't a clear approval gets the neutral letter instead. A refused
  * applicant is often the more willing seller anyway.
  */
-function isApproval(decision: string | null | undefined): boolean {
+export function isApproval(decision: string | null | undefined): boolean {
   if (!decision) return false;
   const d = decision.trim().toLowerCase();
   if (/refus|reject|withdraw|lapsed|declined|closed|not required/.test(d)) return false;
@@ -551,7 +551,7 @@ function isApproval(decision: string | null | undefined): boolean {
  * while. Only when the person we reach is the applicant themselves does the
  * letter speak to them as the owner.
  */
-function writingToApplicant(app: { agentName: string | null; agentFirm: string | null; applicant: string | null }): boolean {
+export function writingToApplicant(app: { agentName: string | null; agentFirm: string | null; applicant: string | null }): boolean {
   if (!app.applicant) return false;
   const applicant = comparable(app.applicant);
   if (!applicant) return false;

@@ -127,6 +127,8 @@ model PlanningApplication {
   // and the date she wants to pick it up again.
   staffNote           String?
   followUpAt          DateTime?
+  // When Lucy sent the one chase-up on a letter nobody answered (lib/services/chase.ts).
+  chasedAt            DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   documents   Document[]
