@@ -212,6 +212,7 @@ Rules:
 - Count what is proposed, not the net change: "demolish 1 house and build 4" = 4. "convert 1 house into 3 flats" = 3. A replacement dwelling (demolish one, build one) = 1.
 - Bedrooms are not homes: "a three-bedroom house" = 1.
 - Add up a mix: "conversion to 1 x 2-bedroom and 1 x 3-bedroom flats" = 2. "2 x 1-bed, 3 x 2-bed" = 5.
+- A pair of semi-detached houses is 2 homes: "two pairs of semi-detached dwellings and two detached dwellings" = 6. "a terrace of four houses" = 4.
 - Extensions, annexes ancillary to an existing house, garages, HMOs, care homes, student rooms, hotels = 0.
 - If the description gives no way to tell, use null.
 
